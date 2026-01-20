@@ -4,7 +4,7 @@ tags:
   - Python
   - JAX
   - CUDA
-  - linear algebra
+  - distributed linear algebra
 authors:
   - name: Roeland Wiersema
     orcid: 0000-0002-0839-4265
