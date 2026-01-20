@@ -2,7 +2,7 @@
     <img src="https://raw.githubusercontent.com/therooler/jaxmg/main/docs/_static/logo.png" alt="Jaxmg" width="300">
 </div>
 
-# JAXMg: A distributed linear solver in JAX with cuSolverMg
+#  JAXMg: A multi-GPU linear solver in JAX
 
 [![Docs](https://img.shields.io/badge/docs-site-blue?style=flat-square)](https://flatironinstitute.github.io/jaxmg/)
 [![Releases](https://img.shields.io/github/v/release/therooler/jaxmg?style=flat-square)](https://github.com/therooler/jaxmg/releases)
