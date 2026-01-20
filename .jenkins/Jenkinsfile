@@ -135,6 +135,8 @@ pipeline {
 
                                                     # Do not quote the wildcard; allow shell globbing
                                                     python -m pip install --no-deps "$WORKDIR"/dist_repaired/jaxmg-*.whl
+                                                    source .jenkins/scripts/gpu_utils.sh
+                                                    killgpu
                                                     python -c "import sys, jax; print(f'Python {sys.version_info[:2]}, JAX {jax.__version__}'); print(jax.devices()); import jaxmg"
                                                 '''
                                                 archiveArtifacts artifacts: "${WORKDIR}/dist_repaired/*.whl", onlyIfSuccessful: true
@@ -143,21 +145,8 @@ pipeline {
                                         stage("Test ${c}-${p}-${j}") {
                                             withEnv(["WORKDIR=${c}/${p}/${j}"]) {
                                                 sh '''#!/bin/bash -ex
-                                                    nukegpu() {
-                                                        local pids
-                                                        pids=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | sed '/^$/d' | sort -u)
-                                                        if [ -z "$pids" ]; then
-                                                            echo "nukegpu_all: no GPU PIDs."
-                                                            return 0
-                                                        fi
-                                                        echo "nukegpu_all: killing ALL GPU PIDs -> $pids"
-                                                        for pid in $pids; do
-                                                            kill -9 "$pid" 2>/dev/null || sudo kill -9 "$pid" 2>/dev/null || echo "could not kill $pid"
-                                                        done
-                                                    }
-
-                                                    # Ensure GPUs are free before running tests
-                                                    nukegpu || true
+                                                    source .jenkins/scripts/gpu_utils.sh
+                                                    killgpu
                                                     source "$WORKDIR/venv/bin/activate"
                                                     python -m pip install pytest matplotlib
                                                     python -m pytest -svv tests
