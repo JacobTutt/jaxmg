@@ -2,7 +2,7 @@ def pytest_collection_modifyitems(config, items):
     selected = []
     deselected = []
     for item in items:
-        selected.append(item)
+        # selected.append(item)
         if "mpmd/test_launch_potrs.py" in item.nodeid:
             selected.append(item)
         else:
