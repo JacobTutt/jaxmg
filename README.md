@@ -102,13 +102,11 @@ As of CUDA 13, there is a new distributed linear algebra library called [cuSolve
 
 ## Citations
 ```
-@software{Wiersema_JAXMg_distributed_linear_2025,
-author = {Wiersema, Roeland},
-month = dec,
-title = {{JAXMg: distributed linear solvers in JAX}},
-url = {https://github.com/flatironinstitute/jaxmg},
-version = {0.0.4},
-year = {2025}
+@misc{2601.14466,
+Author = {Roeland Wiersema},
+Title = {JAXMg: A multi-GPU linear solver in JAX},
+Year = {2026},
+Eprint = {arXiv:2601.14466},
 }
 ```
 
