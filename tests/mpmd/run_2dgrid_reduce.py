@@ -7,7 +7,12 @@ num_procs = int(sys.argv[2]) if len(sys.argv) > 2 else 1
 import jax
 
 jax.config.update("jax_platform_name", "cpu")
-jax.distributed.initialize("localhost:6000", num_procs, proc_id)
+jax.distributed.initialize(
+    coordinator_address="localhost:6000",
+    num_processes=num_procs,
+    process_id=proc_id,
+    coordinator_bind_address="localhost:6000" if proc_id == 0 else None,
+)
 
 from jax.sharding import Mesh, PartitionSpec as P, NamedSharding
 import jax.numpy as jnp

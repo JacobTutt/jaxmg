@@ -15,8 +15,8 @@ jax.distributed.initialize(
     coordinator_address=coord_addr,
     num_processes=num_procs,
     process_id=proc_id,
-    local_device_ids=proc_id,
-    coordinator_bind_address=coord_addr,
+    local_device_ids=[proc_id],
+    coordinator_bind_address=coord_addr if proc_id == 0 else None,
 )
 
 # Basic diagnostics for debugging
