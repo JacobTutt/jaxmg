@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <cerrno>
 #include <cstring>
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <cstdio>
@@ -47,8 +48,15 @@ class DynamicBarrier
 
 public:
     DynamicBarrier(int world_size, const std::string &name = "/mpbarrier")
-        : shm_name(name), world_size(world_size)
+        : world_size(world_size)
     {
+        shm_name = name;
+        const char* env_suffix = std::getenv("JAXMG_BARRIER_NAME");
+        if (env_suffix) {
+            shm_name += env_suffix;
+            std::printf("[Barrier] Using barrier name: %s\n", shm_name.c_str());
+        }
+        
         int fd = shm_open(shm_name.c_str(), O_CREAT | O_EXCL | O_RDWR, 0644);
         if (fd >= 0)
         {
