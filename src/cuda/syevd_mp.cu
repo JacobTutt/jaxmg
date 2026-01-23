@@ -110,7 +110,10 @@ namespace jax
         {
             /* misc */
             const std::string &source = __FILE__;
-
+            /* data types*/
+            cudaDataType compute_type_cu = traits<data_type>::cuda_data_type; // Data type for computation
+            using eigenvalue_type = typename traits<data_type>::S;          // Get the C++ real type
+            cudaDataType eigenvalue_type_cu = traits<eigenvalue_type>::cuda_data_type; // Get the CUDA real type
             /* GPU */
             const int MAX_NUM_DEVICES = 16;
             int nbGpus = 0;
@@ -126,9 +129,9 @@ namespace jax
 
             /* data */
             auto array_data_A = static_cast<data_type *>(a.untyped_data());
-            auto array_data_eigenvalues = static_cast<data_type *>(eigenvalues->untyped_data());
+            auto array_data_eigenvalues = static_cast<eigenvalue_type *>(eigenvalues->untyped_data());
             auto array_data_V = static_cast<data_type *>(V->untyped_data());
-            std::vector<typename traits<data_type>::S> eigenvalues_host(N, 0.);
+            std::vector<eigenvalue_type> eigenvalues_host(N, 0.);
 
             /* Tiling sizes */
             const int IA = 1;
@@ -136,8 +139,6 @@ namespace jax
             const int T_A = std::min(tile_size, batch_a);
 
             /* CUDA */
-            cudaDataType compute_type = traits<data_type>::cuda_data_type;
-            cudaDataType eigenvalue_type = traits<typename traits<data_type>::S>::cuda_data_type;
             cudaLibMgMatrixDesc_t descrA;
             cudaLibMgGrid_t gridA;
             cusolverMgGridMapping_t mapping = CUDALIBMG_GRID_MAPPING_COL_MAJOR;
@@ -173,8 +174,8 @@ namespace jax
             uintptr_t *shmoffsetA = get_shm_lwork_ptr<uintptr_t>(currentDevice, sync_point, shminfo_offsetA, "shmoffsetA");
 
             // Data handles eigenvalues
-            std::vector<data_type *> shmev(nbGpus, nullptr);
-            IpcOpenResult<data_type> opened_ptrs_ev;
+            std::vector<eigenvalue_type *> shmev(nbGpus, nullptr);
+            IpcOpenResult<eigenvalue_type> opened_ptrs_ev;
             cudaIpcMemHandle_t *shmevipc = get_shm_ipc_handles(currentDevice, sync_point, shminfoevipc, "shmevipc");
             uintptr_t *shmoffsetev = get_shm_lwork_ptr<uintptr_t>(currentDevice, sync_point, shminfo_offsetev, "shmoffsetev");
 
@@ -210,7 +211,7 @@ namespace jax
                                                                     N,
                                                                     N,
                                                                     T_A,
-                                                                    compute_type, gridA));
+                                                                    compute_type_cu, gridA));
             }
 
             CUDA_CHECK_OR_RETURN(cudaDeviceSynchronize());
@@ -227,7 +228,7 @@ namespace jax
             if (currentDevice == 0)
             {
                 opened_ptrs_A = ipcGetDevicePointers<data_type>(currentDevice, nbGpus, shmAipc, shmoffsetA);
-                opened_ptrs_ev = ipcGetDevicePointers<data_type>(currentDevice, nbGpus, shmevipc, shmoffsetev);
+                opened_ptrs_ev = ipcGetDevicePointers<eigenvalue_type>(currentDevice, nbGpus, shmevipc, shmoffsetev);
                 opened_ptrs_V = ipcGetDevicePointers<data_type>(currentDevice, nbGpus, shmVipc, shmoffsetV);
 
                 for (int dev = 1; dev < nbGpus; ++dev)
@@ -260,7 +261,7 @@ namespace jax
                 CUSOLVER_CHECK_OR_RETURN(cusolverMgSyevd_bufferSize(cusolverH, jobz, CUBLAS_FILL_MODE_LOWER, N,
                                                                     reinterpret_cast<void **>(shmA.data()), IA, JA, descrA,
                                                                     reinterpret_cast<void *>(eigenvalues_host.data()),
-                                                                    eigenvalue_type, compute_type,
+                                                                    eigenvalue_type_cu, compute_type_cu,
                                                                     &lwork_syevd));
 
                 for (int dev = 0; dev < nbGpus; dev++)
@@ -293,7 +294,7 @@ namespace jax
                     cusolverH, jobz, CUBLAS_FILL_MODE_LOWER, N,
                     reinterpret_cast<void **>(shmA.data()), IA, JA,
                     descrA, reinterpret_cast<void **>(eigenvalues_host.data()),
-                    eigenvalue_type, compute_type,
+                    eigenvalue_type_cu, compute_type_cu,
                     reinterpret_cast<void **>(shmwork.data()), shmlwork[currentDevice], &info);
 
                 CUDA_CHECK_OR_RETURN(cudaDeviceSynchronize());
@@ -322,12 +323,12 @@ namespace jax
                 {
                     // Copy eigenvalues to device 0 eigenvalue buffer
                     JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpy(
-                        shmev[0], eigenvalues_host.data(), sizeof(data_type) * N, gpuMemcpyHostToDevice));
+                        shmev[0], eigenvalues_host.data(), sizeof(eigenvalue_type) * N, gpuMemcpyHostToDevice));
                     CUDA_CHECK_OR_RETURN(cudaDeviceSynchronize());
                     // Broadcast eigenvalues to all other devices
                     for (int dev = 1; dev < nbGpus; dev++)
                     {
-                        JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpy(shmev[dev], shmev[0], sizeof(data_type) * N, gpuMemcpyDeviceToDevice));
+                        JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpy(shmev[dev], shmev[0], sizeof(eigenvalue_type) * N, gpuMemcpyDeviceToDevice));
                     }
                 }
             }
@@ -353,9 +354,9 @@ namespace jax
             }
             else
             {
-                std::vector<typename traits<data_type>::T> host_ev_nan(N, traits<data_type>::nan());
+                std::vector<eigenvalue_type> host_ev_nan(N, traits<eigenvalue_type>::nan());
                 std::vector<typename traits<data_type>::T> host_V_nan(N * batch_a, traits<data_type>::nan());
-                JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpy(array_data_eigenvalues, host_ev_nan.data(), sizeof(data_type) * N, gpuMemcpyHostToDevice));
+                JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpy(array_data_eigenvalues, host_ev_nan.data(), sizeof(eigenvalue_type) * N, gpuMemcpyHostToDevice));
                 JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpy(array_data_V, host_V_nan.data(), sizeof(data_type) * N * batch_a, gpuMemcpyHostToDevice));
             }
             CUDA_CHECK_OR_RETURN(cudaDeviceSynchronize());
