@@ -263,7 +263,7 @@ namespace jax
                 if (cusolver_status_host[0] == 0)
                 { // Copy solution to device 0
                     JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpy(
-                        shmev[0], eigenvalues_host.data(), sizeof(data_type) * N, gpuMemcpyHostToDevice));
+                        shmev[0], eigenvalues_host.data(), sizeof(typename traits<data_type>::S) * N, gpuMemcpyHostToDevice));
                     CUDA_CHECK_OR_RETURN(cudaDeviceSynchronize());
                     // Copy solution to all other devices
                     for (int dev = 1; dev < nbGpus; dev++)
