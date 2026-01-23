@@ -322,7 +322,7 @@ namespace jax
                 {
                     // Copy eigenvalues to device 0 eigenvalue buffer
                     JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpy(
-                        shmev[0], eigenvalues_host.data(), sizeof(typename traits<data_type>::S) * N, gpuMemcpyHostToDevice));
+                        shmev[0], eigenvalues_host.data(), sizeof(data_type) * N, gpuMemcpyHostToDevice));
                     CUDA_CHECK_OR_RETURN(cudaDeviceSynchronize());
                     // Broadcast eigenvalues to all other devices
                     for (int dev = 1; dev < nbGpus; dev++)
