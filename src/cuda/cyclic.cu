@@ -160,17 +160,7 @@ namespace jax
             sync_point.arrive_and_wait();
 
             shmA[currentDevice] = array_data_A;
-            if (g_cusolver_utils_verbose)
-            {
-                std::vector<typename traits<data_type>::T> host(N * batch_a);
-                size_t numBytes = sizeof(data_type) * N * batch_a;
-
-                CUDA_CHECK_OR_RETURN(cudaMemcpy(host.data(), shmA[currentDevice], numBytes, cudaMemcpyDeviceToHost));
-                CUDA_CHECK_OR_RETURN(cudaDeviceSynchronize());
-
-                printf("Dev %d\n", currentDevice);
-                print_matrix(N, batch_a, host.data(), N);
-            }
+            
             sync_point.arrive_and_wait();
 
             if (currentDevice == 0)
@@ -185,15 +175,6 @@ namespace jax
             CUDA_CHECK_OR_RETURN(cudaDeviceSynchronize());
             sync_point.arrive_and_wait();
 
-            if (g_cusolver_utils_verbose)
-            {
-                std::vector<typename traits<data_type>::T> host(N * batch_a);
-                size_t numBytes = sizeof(data_type) * N * batch_a;
-                CUDA_CHECK_OR_RETURN(cudaMemcpy(host.data(), shmA[currentDevice], numBytes, cudaMemcpyDeviceToHost));
-                CUDA_CHECK_OR_RETURN(cudaDeviceSynchronize());
-                printf("Dev %d\n", currentDevice);
-                print_matrix(N, batch_a, host.data(), N);
-            }
             out_data = shmA[currentDevice];
             return ffi::Error::Success();
         }

@@ -37,7 +37,6 @@ namespace jax
     cusolverMgHandle_t handle;
     if (pool->handles_[stream].empty())
     {
-      // std::printf("Hitting cusolverMgCreate");
       JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverMgCreate(&handle)));
     }
     else
@@ -47,7 +46,6 @@ namespace jax
     }
     // #TODO Need to handle the case where the stream is nonempty, which should never happen.
     //   if (stream) {
-    // std::printf("Hitting this if statement");
     // JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnSetStream(handle, stream)));
     //   }
     return Handle(pool, handle, stream);

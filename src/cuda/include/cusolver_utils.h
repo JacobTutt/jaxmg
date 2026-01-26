@@ -75,9 +75,7 @@ std::unordered_map<int, std::pair<int, bool>> get_col_maps(int N, int N_batch, i
 {
     std::unordered_map<int, std::pair<int, bool>> col_map;
 
-    // int num_devices_active = (N + N_batch - 1) / N_batch; // ceil(N / N_batch)
-    // if (g_cusolver_utils_verbose)
-    //     std::printf("num_devices_active=%d\n", num_devices_active);
+    // Shard size
     int shard_size = N / num_devices;
     // dst_cols initialized with size num_devices to mirror the python file
     std::vector<int> dst_cols(num_devices, 0);

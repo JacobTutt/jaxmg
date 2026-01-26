@@ -45,7 +45,6 @@ if any("gpu" == d.platform for d in jax.devices()):
     cuda_major = ""
     if m:
         cuda_major = m.group(1)[:2]
-        # print(f"CUDA major: {cuda_major}")
     else:
         raise OSError("Unable to parse CUDA version")
     bin_dir = f"cu{cuda_major}"

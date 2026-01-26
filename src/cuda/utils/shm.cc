@@ -163,7 +163,6 @@ T **get_shm_device_ptrs(int currentDevice, ThreadBarrier &sync_point, sharedMemo
       printf("Failed to create shared memory '%s'\n", lshmName.c_str());
       exit(EXIT_FAILURE); // #TODO: replace this with proper JAX error handling
     }
-    // printf("Created shm in device %d\n", currentDevice);
     shm = (T **)info.addr;
     memset((void *)shm, 0, shmSize);
   }

@@ -114,8 +114,7 @@ namespace jax
             int currentDevice = 0;          // current GPU
             CUDA_CHECK_OR_RETURN(cudaGetDeviceCount(&nbGpus));
             CUDA_CHECK_OR_RETURN(cudaGetDevice(&currentDevice));
-            // std::printf("Number of GPUs: %d\n", nbGpus);
-            // std::printf("currentDevice: %d\n", currentDevice);
+
             if (nbGpus > MAX_NUM_DEVICES)
             {
                 return ffi::Error::InvalidArgument(
