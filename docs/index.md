@@ -11,4 +11,4 @@ JAXMg provides a C++ interface between [JAX](https://github.com/google/jax) and 
 - [cusolverMgPotrs](https://docs.nvidia.com/cuda/cusolver/index.html#cusolvermgpotri-deprecated): Computes the inverse of an $N\times N$ symmetric (Hermitian) positive-definite matrix via a Cholesky decomposition.
 - [cusolverMgPotrs](https://docs.nvidia.com/cuda/cusolver/index.html#cusolvermgsyevd-deprecated): Computes eigenvalues and eigenvectors of an $N\times N$ symmetric (Hermitian) matrix.
 
-For more details, see the [API](api/potrs.md).
+For more details, see the [API](api/potrs.md) and the accompanying [paper](https://arxiv.org/abs/2601.14466).

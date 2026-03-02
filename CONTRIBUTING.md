@@ -13,6 +13,8 @@
 
 - Change to the CusolverMp API that's available for CUDA 13.
 
+There has been a discussion with the cuSOLVERMp team at NVIDIA who can potentially assist with this. The main problem is communicating between the different threads/processes that launch cuSOLVERMp from JAX. Since JAX launches a thread/process for each GPU, we need to be able to synchronize these processes and orchestrate calls to cuSOLVER from a designated master process. In JAXMg this is handled by creating shared memory, and sharing GPU pointers between the processes. However, for cuSOLVERMp, where GPUs can be on different nodes, this would be quite a challenge to set up in a robust way. This could be resolved if it was possible to pass the underlying XLA communicator through from JAX to the foreign function interface, so that multi process synchronization collectives are accessible on the C++ side.
+
 ## Build from source
 
 To build from source:
@@ -27,7 +29,7 @@ cmake --build . --target install
 This installs the CUDA binaries into `src/jaxmg/bin`
 
 Dependencies are managed with [CPM-CMAKE](https://github.com/cpm-cmake/CPM.cmake),
-including **abseil-cpp**, **jaxlib**, **XLA** for compilation. Compilation requires C++20 or later and an installation of CUDA Toolkit 12.x or 13.x.
+including **abseil-cpp**, **jaxlib**, **XLA** for compilation. Compilation requires C++20 or later and an installation of CUDA Toolkit 12.x or 13.x. See the Docker images in `.jenkins` for an environment that can compile the code.
 
 To build specific targets only, for example potrs:
 ```bash
@@ -49,7 +51,7 @@ pytest tests
 There are two types of tests:
 
 1. SPMD tests: Single Process Multiple GPU tests.
-3. MPMD: Multiple Processes Multiple GPU tests.
+3. MPMD: Multiple Processes Multiple GPU tests. Marked using the PyTest mark `mpmd`.
 
 Use the `conftest.py` file in tests to turn on/off any tests you want to run. 
 
@@ -108,7 +110,7 @@ Get the latest built wheels from Jenkins:
 
 ```bash
 mkdir dist
-VERSION=0.0.5
+VERSION=0.0.6
 CUDA_FLAVOR=cuda12-local
 JAX_VERSION=0.8.1
 for PY in 3.11 3.12 3.13 3.14; do
@@ -128,5 +130,5 @@ python -m twine upload --repository testpypi dist/*
 ```
 Test the wheel
 ```bash
-pip install -i https://test.pypi.org/simple/ "jaxmg[cuda12]==0.0.5" --extra-index-url https://pypi.org/simple
+pip install -i https://test.pypi.org/simple/ "jaxmg[cuda12]==0.0.6" --extra-index-url https://pypi.org/simple
 ```
