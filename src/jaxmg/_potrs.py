@@ -1,5 +1,4 @@
 import os
-
 import jax
 import jax.numpy as jnp
 from jax import Array
@@ -9,6 +8,7 @@ from typing import Tuple, List, Union
 from functools import partial
 
 from ._cyclic_1d import calculate_padding, pad_rows
+from ._setup import ensure_init_jaxmg_backend
 
 
 def potrs(
@@ -77,6 +77,7 @@ def potrs(
         - If the native solver fails the returned solution may contain NaNs and
           ``status`` will be non-zero.
     """
+    ensure_init_jaxmg_backend()
 
     ndev = int(os.environ["JAXMG_NUMBER_OF_DEVICES"])
 
@@ -227,6 +228,7 @@ def potrs_shardmap_ctx(a: Array, b: Array, T_A: int, pad=True) -> Tuple[Array, A
         - Because it does not use ``donate_argnums``, the input buffers are
           not donated to the FFI call (no zero-copy donation semantics).
     """
+    ensure_init_jaxmg_backend()
     ndev = int(os.environ["JAXMG_NUMBER_OF_DEVICES"])
     assert a.shape[1] == b.shape[0], "A and b must have the same number of rows."
     assert a.ndim == 2, "a must be a 2D array."
