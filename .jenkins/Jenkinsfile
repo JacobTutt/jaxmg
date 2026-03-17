@@ -106,7 +106,7 @@ pipeline {
                                             echo "Skipping ${c}-${p}-${j}: python 3.14 with JAX 0.6.2 unsupported"
                                             continue
                                         }
-                                        if (p == '3.11' && j == '0.6.2') {
+                                        if (p == '3.11') {
                                             pytest_cmd = "python -m pytest -svv tests"
                                         } else {
                                             pytest_cmd = "python -m pytest -svv -m 'not mpmd' tests"
