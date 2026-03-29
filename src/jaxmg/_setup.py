@@ -97,6 +97,9 @@ def _initialize():
 
             jax.ffi.register_ffi_target("cyclic_mg", jax.ffi.pycapsule(library_cyclic.CyclicMgFFI), platform="CUDA")
             jax.ffi.register_ffi_target("potrs_mg", jax.ffi.pycapsule(library_potrs.PotrsMgFFI), platform="CUDA")
+            jax.ffi.register_ffi_target(
+                "potrs_logdet_mg", jax.ffi.pycapsule(library_potrs.PotrsMgLogdetFFI), platform="CUDA"
+            )
             jax.ffi.register_ffi_target("potri_mg", jax.ffi.pycapsule(library_potri.PotriMgFFI), platform="CUDA")
             jax.ffi.register_ffi_target("syevd_mg", jax.ffi.pycapsule(library_syevd.SyevdMgFFI), platform="CUDA")
             jax.ffi.register_ffi_target(

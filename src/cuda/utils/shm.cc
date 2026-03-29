@@ -218,6 +218,8 @@ T *get_shm_lwork_ptr(int currentDevice, barrier &sync_point, sharedMemoryInfo &i
 template int64_t *get_shm_lwork_ptr<int64_t, DynamicBarrier>(int, DynamicBarrier &, sharedMemoryInfo &, const char *);
 template int32_t *get_shm_lwork_ptr<int32_t, DynamicBarrier>(int, DynamicBarrier &, sharedMemoryInfo &, const char *);
 template uintptr_t *get_shm_lwork_ptr<uintptr_t, DynamicBarrier>(int, DynamicBarrier &, sharedMemoryInfo &, const char *);
+template double *get_shm_lwork_ptr<double, DynamicBarrier>(int, DynamicBarrier &, sharedMemoryInfo &, const char *);
+template double *get_shm_lwork_ptr<double, ThreadBarrier>(int, ThreadBarrier &, sharedMemoryInfo &, const char *);
 
 template int64_t *get_shm_lwork_ptr<int64_t, ThreadBarrier>(int, ThreadBarrier &, sharedMemoryInfo &, const char *);
 template int32_t *get_shm_lwork_ptr<int32_t, ThreadBarrier>(int, ThreadBarrier &, sharedMemoryInfo &, const char *);

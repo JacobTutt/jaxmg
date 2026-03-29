@@ -85,6 +85,64 @@ namespace jax
     {
         namespace ffi = ::xla::ffi;
 
+        __device__ inline double abs_for_logdet(float value) { return fabs(static_cast<double>(value)); }
+        __device__ inline double abs_for_logdet(double value) { return fabs(value); }
+        __device__ inline double abs_for_logdet(cuFloatComplex value)
+        {
+            return hypot(static_cast<double>(cuCrealf(value)), static_cast<double>(cuCimagf(value)));
+        }
+        __device__ inline double abs_for_logdet(cuDoubleComplex value)
+        {
+            return hypot(cuCreal(value), cuCimag(value));
+        }
+
+        __device__ inline double atomicAddDouble(double *address, double value)
+        {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 600)
+            return atomicAdd(address, value);
+#else
+            unsigned long long int *address_as_ull = reinterpret_cast<unsigned long long int *>(address);
+            unsigned long long int old = *address_as_ull;
+            unsigned long long int assumed;
+
+            do
+            {
+                assumed = old;
+                old = atomicCAS(
+                    address_as_ull,
+                    assumed,
+                    __double_as_longlong(value + __longlong_as_double(assumed)));
+            } while (assumed != old);
+
+            return __longlong_as_double(old);
+#endif
+        }
+
+        template <typename data_type>
+        __global__ void AccumulateLogdetKernel(
+            const data_type *factor,
+            int64_t N,
+            int T_A,
+            int nbGpus,
+            int currentDevice,
+            double *out_sum)
+        {
+            double local_sum = 0.0;
+            int64_t idx = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+            int64_t stride = static_cast<int64_t>(blockDim.x) * gridDim.x;
+
+            for (int64_t row = idx; row < N; row += stride)
+            {
+                if (((row / T_A) % nbGpus) != currentDevice)
+                    continue;
+                int64_t local_row = (row / (static_cast<int64_t>(nbGpus) * T_A)) * T_A + (row % T_A);
+                double abs_diag = abs_for_logdet(factor[local_row * N + row]);
+                local_sum += log(abs_diag > 0.0 ? abs_diag : 1.0e-300);
+            }
+
+            atomicAddDouble(out_sum, local_sum);
+        }
+
 #define SOLVER_DISPATCH_IMPL(impl, ...)            \
     switch (dataType)                              \
     {                                              \
@@ -105,7 +163,8 @@ namespace jax
                                ffi::AnyBuffer a, ffi::AnyBuffer b, int64_t tile_size,
                                ffi::Result<ffi::AnyBuffer> out_a,
                                ffi::Result<ffi::AnyBuffer> out_b, 
-                               ffi::Result<ffi::Buffer<ffi::S32>> status)
+                               ffi::Result<ffi::Buffer<ffi::S32>> status,
+                               ffi::Result<ffi::Buffer<ffi::F64>> *logdet = nullptr)
         {
             /* misc */
             const std::string &source = __FILE__; // file name for error messages
@@ -158,6 +217,7 @@ namespace jax
             int info = 0;                            // Info used by cusolverMg calls
             cusolverStatus_t cusolver_status;        // Return status of cusolverMg calls
             auto status_data = status->typed_data(); // Status returned by potrf
+            double *logdet_data = logdet ? (*logdet)->typed_data() : nullptr;
             int64_t lwork_potrf = 0;                 // Workspace size used by cusolverMg calls
             int64_t lwork_potrs = 0;
 
@@ -173,12 +233,14 @@ namespace jax
             sharedMemoryInfo shminfowork;
             sharedMemoryInfo shminfolwork; // Shared memory info for lwork space nbytes
             sharedMemoryInfo shmcsh;       // Shared memory info for cusolver status
+            sharedMemoryInfo shmlogdet;
 
             const std::string shmA_name = absl::StrFormat("/jaxmg_potrs_shmA_%d", getppid());
             const std::string shmB_name = absl::StrFormat("/jaxmg_potrs_shmB_%d", getppid());
             const std::string shmwork_name = absl::StrFormat("/jaxmg_potrs_shmwork_%d", getppid());
             const std::string shmcsh_name = absl::StrFormat("/jaxmg_potrs_shmcsh_%d", getppid());
             const std::string shmlwork_name = absl::StrFormat("/jaxmg_potrs_shmlwork_%d", getppid());
+            const std::string shmlogdet_name = absl::StrFormat("/jaxmg_potrs_shmlogdet_%d", getppid());
             
             data_type **shmA = get_shm_device_ptrs<data_type>(currentDevice, sync_point, shminfoA, shmA_name.c_str()); // Actual shared memory
             data_type **shmB = get_shm_device_ptrs<data_type>(currentDevice, sync_point, shminfoB, shmB_name.c_str());
@@ -186,6 +248,7 @@ namespace jax
 
             int32_t *cusolver_status_host = get_shm_lwork_ptr<int32_t, ThreadBarrier>(currentDevice, sync_point, shmcsh, shmcsh_name.c_str());
             int64_t *shmlwork = get_shm_lwork_ptr<int64_t, ThreadBarrier>(currentDevice, sync_point, shminfolwork, shmlwork_name.c_str());
+            double *shm_logdet = logdet ? get_shm_lwork_ptr<double, ThreadBarrier>(currentDevice, sync_point, shmlogdet, shmlogdet_name.c_str()) : nullptr;
 
             if (currentDevice == 0)
             {
@@ -259,6 +322,11 @@ namespace jax
             /* array_d_work[j] points to device workspace of device j */
             FFI_ASSIGN_OR_RETURN(auto workspace, AllocateWorkspaceBytes<data_type>(scratch, sizeof(data_type) * (shmlwork[currentDevice]), "workspace_potrf"));
             shmwork[currentDevice] = workspace;
+            double *logdet_workspace = nullptr;
+            if (logdet)
+            {
+                FFI_ASSIGN_OR_RETURN(logdet_workspace, AllocateWorkspaceBytes<double>(scratch, sizeof(double), "workspace_logdet"));
+            }
 
             /* sync all devices */
             CUDA_CHECK_OR_RETURN(cudaDeviceSynchronize());
@@ -288,6 +356,10 @@ namespace jax
                 // Check status, if 0, continue with Potrs
                 if (cusolver_status_host[0] == 0)
                 {
+                    if (logdet)
+                    {
+                        CUDA_CHECK_OR_RETURN(cudaMemsetAsync(logdet_workspace, 0, sizeof(double), stream));
+                    }
                     cusolver_status = cusolverMgPotrs(cusolverH, CUBLAS_FILL_MODE_LOWER, N, NRHS, /* NRHS */
                                                       reinterpret_cast<void **>(shmA), IA, JA, descrA,
                                                       reinterpret_cast<void **>(shmB), IB, JB, descrB,
@@ -315,9 +387,48 @@ namespace jax
             CUDA_CHECK_OR_RETURN(cudaDeviceSynchronize());
             sync_point.arrive_and_wait();
 
+            if (logdet && cusolver_status_host[currentDevice] == 0)
+            {
+                CUDA_CHECK_OR_RETURN(cudaMemsetAsync(logdet_workspace, 0, sizeof(double), stream));
+                int block_size = 256;
+                int grid_size = static_cast<int>(std::min<int64_t>(256, (N + block_size - 1) / block_size));
+                AccumulateLogdetKernel<data_type><<<grid_size, block_size, 0, stream>>>(
+                    shmA[currentDevice], N, T_A, nbGpus, currentDevice, logdet_workspace);
+                CUDA_CHECK_OR_RETURN(cudaGetLastError());
+                CUDA_CHECK_OR_RETURN(cudaStreamSynchronize(stream));
+                JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpy(&shm_logdet[currentDevice], logdet_workspace, sizeof(double), gpuMemcpyDeviceToHost));
+            }
+            else if (logdet)
+            {
+                shm_logdet[currentDevice] = NAN;
+            }
+
+            CUDA_CHECK_OR_RETURN(cudaDeviceSynchronize());
+            sync_point.arrive_and_wait();
+            if (currentDevice == 0 && logdet)
+            {
+                double total_logdet = 0.0;
+                for (int dev = 0; dev < nbGpus; dev++)
+                {
+                    total_logdet += shm_logdet[dev];
+                }
+                total_logdet *= 2.0;
+                for (int dev = 0; dev < nbGpus; dev++)
+                {
+                    shm_logdet[dev] = total_logdet;
+                }
+            }
+
+            CUDA_CHECK_OR_RETURN(cudaDeviceSynchronize());
+            sync_point.arrive_and_wait();
+
             // Write status data
             int32_t status_val = static_cast<int32_t>(cusolver_status_host[currentDevice]);
             JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpy(status_data, &status_val, sizeof(status_val), gpuMemcpyHostToDevice));
+            if (logdet)
+            {
+                JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpy(logdet_data, &shm_logdet[currentDevice], sizeof(double), gpuMemcpyHostToDevice));
+            }
             // Write solution to all shmBs
             if (currentDevice == 0)
             {
@@ -347,6 +458,10 @@ namespace jax
             sharedMemoryClose(&shminfowork);
             sharedMemoryClose(&shmcsh);
             sharedMemoryClose(&shminfolwork);
+            if (logdet)
+            {
+                sharedMemoryClose(&shmlogdet);
+            }
             sync_point.arrive_and_wait();
             if (currentDevice == 0)
             {
@@ -361,6 +476,10 @@ namespace jax
                 sharedMemoryUnlink(shmwork_name.c_str());
                 sharedMemoryUnlink(shmcsh_name.c_str());
                 sharedMemoryUnlink(shmlwork_name.c_str());
+                if (logdet)
+                {
+                    sharedMemoryUnlink(shmlogdet_name.c_str());
+                }
             }
             CUDA_CHECK_OR_RETURN(cudaDeviceSynchronize());
             sync_point.arrive_and_wait();
@@ -404,6 +523,43 @@ namespace jax
                 "Unsupported data type%s for potrs", absl::FormatStreamed(dataType)));
         }
 
+        ffi::Error PotrsMgLogdetDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
+                                         ffi::AnyBuffer a, ffi::AnyBuffer b, int64_t tile_size,
+                                         ffi::Result<ffi::AnyBuffer> out_a,
+                                         ffi::Result<ffi::AnyBuffer> out_b,
+                                         ffi::Result<ffi::Buffer<ffi::F64>> logdet,
+                                         ffi::Result<ffi::Buffer<ffi::S32>> status)
+        {
+            auto dataType = a.element_type();
+
+            FFI_ASSIGN_OR_RETURN((const auto [batch_a, N]), SplitBatch1D(a.dimensions()));
+            FFI_ASSIGN_OR_RETURN((const auto [N_b, NRHS]), SplitBatch1D(b.dimensions()));
+            FFI_RETURN_IF_ERROR(CheckShape(b.dimensions(), {N, NRHS}, "b", "potrf"));
+
+            if (dataType != out_a->element_type())
+            {
+                return ffi::Error::InvalidArgument(
+                    "The input and output to potrs must have the same element type");
+            }
+            if (dataType != out_b->element_type())
+            {
+                return ffi::Error::InvalidArgument(
+                    "The input and output to potrs must have the same element type");
+            }
+            if (dataType != b.element_type())
+            {
+                return ffi::Error::InvalidArgument(
+                    "The input matrix a and output x of potrs must have the same element type");
+            }
+            FFI_RETURN_IF_ERROR(CheckShape(logdet->dimensions(), 1, "logdet", "potrs"));
+            FFI_RETURN_IF_ERROR(CheckShape(status->dimensions(), 1, "status", "potrf"));
+
+            SOLVER_DISPATCH_IMPL(PotrsMgImpl, N, NRHS, batch_a, stream, scratch, a, b, tile_size, out_a, out_b, status, &logdet);
+
+            return ffi::Error::InvalidArgument(absl::StrFormat(
+                "Unsupported data type%s for potrs", absl::FormatStreamed(dataType)));
+        }
+
         XLA_FFI_DEFINE_HANDLER_SYMBOL(PotrsMgFFI, PotrsMgDispatch,
                                       ffi::Ffi::Bind()
                                           .Ctx<ffi::PlatformStream<gpuStream_t>>()
@@ -413,6 +569,19 @@ namespace jax
                                           .Attr<int64_t>("T_A")         // tile size
                                           .Ret<ffi::AnyBuffer>()        // A_out
                                           .Ret<ffi::AnyBuffer>()        // b_out
+                                          .Ret<ffi::Buffer<ffi::S32>>() // status
+        );
+
+        XLA_FFI_DEFINE_HANDLER_SYMBOL(PotrsMgLogdetFFI, PotrsMgLogdetDispatch,
+                                      ffi::Ffi::Bind()
+                                          .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                          .Ctx<ffi::ScratchAllocator>()
+                                          .Arg<ffi::AnyBuffer>()        // A
+                                          .Arg<ffi::AnyBuffer>()        // b
+                                          .Attr<int64_t>("T_A")         // tile size
+                                          .Ret<ffi::AnyBuffer>()        // A_out
+                                          .Ret<ffi::AnyBuffer>()        // b_out
+                                          .Ret<ffi::Buffer<ffi::F64>>() // logdet
                                           .Ret<ffi::Buffer<ffi::S32>>() // status
         );
 

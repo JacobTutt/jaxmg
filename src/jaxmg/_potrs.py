@@ -212,6 +212,12 @@ def potrs(
         jax.ShapeDtypeStruct(b.shape, b.dtype),
         jax.ShapeDtypeStruct((1,), jnp.int32),
     )
+    out_type_logdet = (
+        jax.ShapeDtypeStruct((shard_size + padding, N), a.dtype),
+        jax.ShapeDtypeStruct(b.shape, b.dtype),
+        jax.ShapeDtypeStruct((1,), jnp.float64),
+        jax.ShapeDtypeStruct((1,), jnp.int32),
+    )
 
     # Prepare ffi call
     ffi_fn = partial(
@@ -220,6 +226,16 @@ def potrs(
             out_type,
             input_layouts=input_layouts,
             output_layouts=output_layouts,
+            input_output_aliases={0: 0, 1: 1},
+        ),
+        T_A=T_A,
+    )
+    ffi_fn_logdet = partial(
+        jax.ffi.ffi_call(
+            "potrs_logdet_mg",
+            out_type_logdet,
+            input_layouts=input_layouts,
+            output_layouts=((0, 1), (1, 0), (0,), (0,)),
             input_output_aliases={0: 0, 1: 1},
         ),
         T_A=T_A,
@@ -259,9 +275,25 @@ def potrs(
         )
         return _out_b, jnp.expand_dims(_logdet, axis=0), _status
 
+    @partial(jax.jit, donate_argnums=(0, 1))
+    @partial(
+        jax.shard_map,
+        mesh=mesh,
+        in_specs=(P(axis_name, None), P(None, None)),
+        out_specs=(P(None, None), P(None), P(None)),
+        check_vma=False,
+    )
+    def impl_with_native_logdet(_a, _b):
+        _a = _a.conj()
+        _out_a, _out_b, _logdet, _status = ffi_fn_logdet(_a, _b)
+        return _out_b, _logdet, _status
+
     def fn(_a, _b):
         _a = pad_fn(_a)
         if return_logdet:
+            if not jax.distributed.is_initialized():
+                _out_b, _logdet, _status = impl_with_native_logdet(_a, _b)
+                return _out_b, _logdet, _status
             _out_b, _logdet, _status = impl_with_logdet(_a, _b)
             return _out_b, _logdet, _status
         _out_a, _out_b, _status = impl(_a, _b)
@@ -279,7 +311,13 @@ def potrs(
     return out
 
 
-def potrs_shardmap_ctx(a: Array, b: Array, T_A: int, pad=True) -> Tuple[Array, Array]:
+def potrs_shardmap_ctx(
+    a: Array,
+    b: Array,
+    T_A: int,
+    return_logdet: bool = False,
+    pad=True,
+) -> Union[Tuple[Array, Array], Tuple[Array, Array, Array]]:
     """Solve A x = B by invoking the native multi-GPU potrs kernel without shard_map.
 
     This helper is a lightweight, lower-level variant of :func:`jaxmg.potrs` intended
@@ -316,9 +354,10 @@ def potrs_shardmap_ctx(a: Array, b: Array, T_A: int, pad=True) -> Tuple[Array, A
             requirements.
 
     Returns:
-        tuple: ``(x, status)`` where ``x`` is the solver result (same shape as
-            ``b``) and ``status`` is the int32 status value returned by the
-            native kernel (shape ``(1,)`` device array).
+        tuple: ``(x, status)`` or ``(x, logdet, status)`` where ``x`` is the
+            solver result (same shape as ``b``), ``logdet`` is a float64 device
+            scalar with ``log|A|``, and ``status`` is the int32 status value
+            returned by the native kernel.
 
     Raises:
         AssertionError: If input arrays are not 2D or their shapes are
@@ -362,6 +401,12 @@ def potrs_shardmap_ctx(a: Array, b: Array, T_A: int, pad=True) -> Tuple[Array, A
         jax.ShapeDtypeStruct(b.shape, b.dtype),
         jax.ShapeDtypeStruct((1,), jnp.int32),
     )
+    out_type_logdet = (
+        jax.ShapeDtypeStruct((shard_size + padding, N), a.dtype),
+        jax.ShapeDtypeStruct(b.shape, b.dtype),
+        jax.ShapeDtypeStruct((1,), jnp.float64),
+        jax.ShapeDtypeStruct((1,), jnp.int32),
+    )
 
     # Prepare ffi call
     ffi_fn = partial(
@@ -374,6 +419,16 @@ def potrs_shardmap_ctx(a: Array, b: Array, T_A: int, pad=True) -> Tuple[Array, A
         ),
         T_A=T_A,
     )
+    ffi_fn_logdet = partial(
+        jax.ffi.ffi_call(
+            "potrs_logdet_mg",
+            out_type_logdet,
+            input_layouts=input_layouts,
+            output_layouts=((0, 1), (1, 0), (0,), (0,)),
+            input_output_aliases={0: 0, 1: 1},
+        ),
+        T_A=T_A,
+    )
 
     # Jit with donate_argnums=0 is crucial for buffer sharing
     def impl(_a, _b):
@@ -381,8 +436,16 @@ def potrs_shardmap_ctx(a: Array, b: Array, T_A: int, pad=True) -> Tuple[Array, A
         _out_a, _out_b, _status = ffi_fn(_a, _b)
         return _out_b, _status
 
+    def impl_with_native_logdet(_a, _b):
+        _a = _a.conj()
+        _out_a, _out_b, _logdet, _status = ffi_fn_logdet(_a, _b)
+        return _out_b, _logdet, _status
+
     def fn(_a, _b):
         _a = pad_fn(_a)
+        if return_logdet:
+            _out, _logdet, _status = impl_with_native_logdet(_a, _b)
+            return _out, _logdet, _status
         _out, _status = impl(_a, _b)
         return _out, _status
 
