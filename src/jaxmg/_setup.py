@@ -113,6 +113,9 @@ def _initialize():
             library_syevd_no_V_mp = ctypes.cdll.LoadLibrary(os.path.join(_lib_dir, f"{bin_dir}/libsyevd_no_V_mp.so"))
 
             jax.ffi.register_ffi_target("potrs_mg", jax.ffi.pycapsule(library_potrs_mp.PotrsMgMpFFI), platform="CUDA")
+            jax.ffi.register_ffi_target(
+                "potrs_logdet_mg", jax.ffi.pycapsule(library_potrs_mp.PotrsMgMpLogdetFFI), platform="CUDA"
+            )
             jax.ffi.register_ffi_target("potri_mg", jax.ffi.pycapsule(library_potri_mp.PotriMgMpFFI), platform="CUDA")
             jax.ffi.register_ffi_target("syevd_mg", jax.ffi.pycapsule(library_syevd_mp.SyevdMgMpFFI), platform="CUDA")
             jax.ffi.register_ffi_target(
