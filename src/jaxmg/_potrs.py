@@ -1,14 +1,68 @@
 import os
+from functools import partial
+from typing import List, Tuple, Union
+
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax import Array
-from jax.sharding import PartitionSpec as P, Mesh
-
-from typing import Tuple, List, Union
-from functools import partial
+from jax.sharding import Mesh, PartitionSpec as P
 
 from ._cyclic_1d import calculate_padding, pad_rows
 from ._setup import ensure_init_jaxmg_backend
+
+
+def _build_cyclic_diag_lookup(
+    n: int,
+    n_batch: int,
+    tile_size: int,
+    num_devices: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Map each logical diagonal entry to the owning cyclic row shard.
+
+    ``potrs`` internally remaps row-sharded inputs into jaxmg's 1D cyclic row
+    layout before factorization. The Cholesky diagonal therefore lives at
+    ``factor[local_row, global_col]`` where ``local_row`` depends on the cyclic
+    permutation. This helper returns:
+
+    - ``diag_devices[i]``: which device owns the diagonal entry for global row ``i``
+    - ``diag_local_rows[i]``: the corresponding local row index on that device
+    """
+    diag_devices = np.empty(n, dtype=np.int32)
+    diag_local_rows = np.empty(n, dtype=np.int32)
+    rows_per_device = np.zeros(num_devices, dtype=np.int32)
+    device_index = -1
+
+    for row in range(n):
+        if row % tile_size == 0:
+            device_index = (device_index + 1) % num_devices
+        diag_devices[row] = device_index
+        diag_local_rows[row] = rows_per_device[device_index]
+        rows_per_device[device_index] += 1
+
+    if np.any(rows_per_device > n_batch):
+        raise ValueError(
+            "Cyclic diagonal lookup exceeded the per-device row capacity. "
+            f"Got rows_per_device={rows_per_device.tolist()} with n_batch={n_batch}."
+        )
+
+    return diag_devices, diag_local_rows
+
+
+def _cyclic_logdet_from_factor(
+    factor: Array,
+    diag_devices: Array,
+    diag_local_rows: Array,
+    diag_cols: Array,
+    axis_name: str,
+) -> Array:
+    """Return ``log|A|`` from a Cholesky factor stored in cyclic row layout."""
+    axis_index = jax.lax.axis_index(axis_name)
+    safe_rows = jnp.minimum(diag_local_rows, factor.shape[0] - 1)
+    diag_vals = factor[safe_rows, diag_cols]
+    log_abs_diag = jnp.log(jnp.abs(diag_vals))
+    local_sum = jnp.sum(jnp.where(diag_devices == axis_index, log_abs_diag, 0.0))
+    return 2.0 * jax.lax.psum(local_sum, axis_name)
 
 
 def potrs(
@@ -18,8 +72,9 @@ def potrs(
     mesh: Mesh,
     in_specs: Tuple[P] | List[P] | P,
     return_status: bool = False,
+    return_logdet: bool = False,
     pad=True,
-) -> Union[Array, Tuple[Array, int]]:
+) -> Union[Array, Tuple[Array, Array], Tuple[Array, int], Tuple[Array, Array, int]]:
     """Solve the linear system A x = B using the multi-GPU potrs native kernel.
 
     Prepares inputs for the native ``potrs_mg`` kernel and executes it via
@@ -53,17 +108,25 @@ def potrs(
         in_specs (PartitionSpec or tuple/list[PartitionSpec]): PartitionSpec
             describing the input sharding (row sharding). May be provided as a
             single ``PartitionSpec`` or a single-element container containing one.
-        return_status (bool, optional): If True return ``(x, status)`` where
-            ``status`` is a host-replicated int32 from the native solver. If
-            False return ``x`` only. Default is False.
+        return_status (bool, optional): If True append the host-replicated
+            native solver status to the return value. Default is False.
+        return_logdet (bool, optional): If True also return ``log|A|`` computed
+            from the Cholesky factor already produced inside ``potrs``. The
+            factor stays internal to the jitted wrapper; only the scalar logdet
+            is returned. Default is False.
         pad (bool, optional): If True (default) apply per-device padding to
             ``a`` so each local shard length is compatible with ``T_A``; if
             False the caller must ensure shapes already match the kernel's
             requirements.
 
     Returns:
-        Array or (Array, int): The solution ``x`` (replicated across devices).
-            If ``return_status=True`` also return the native solver status.
+        One of:
+            - ``x``
+            - ``(x, status)``
+            - ``(x, logdet)``
+            - ``(x, logdet, status)``
+        where ``x`` is the solution replicated across devices and ``logdet``
+        is the scalar ``log|A|``.
 
     Raises:
         AssertionError: If ``a`` or ``b`` are not the correct shape, or if their shapes
@@ -93,7 +156,7 @@ def potrs(
         )
     if (in_specs._partitions[0] == None) or (in_specs._partitions[1] != None):
         raise ValueError(
-            "A must be sharded along the columns with PartitionSpec P(None, str)."
+            "A must be sharded along the rows with PartitionSpec P(str, None)."
         )
 
     assert a.shape[1] == b.shape[0], "A and b must have the same number of columns."
@@ -133,6 +196,17 @@ def potrs(
             check_vma=True,
         )
 
+    if return_logdet:
+        diag_devices_host, diag_local_rows_host = _build_cyclic_diag_lookup(
+            n=N,
+            n_batch=shard_size + padding,
+            tile_size=T_A,
+            num_devices=ndev,
+        )
+        diag_devices = jnp.asarray(diag_devices_host)
+        diag_local_rows = jnp.asarray(diag_local_rows_host)
+        diag_cols = jnp.arange(N, dtype=jnp.int32)
+
     out_type = (
         jax.ShapeDtypeStruct((shard_size + padding, N), a.dtype),
         jax.ShapeDtypeStruct(b.shape, b.dtype),
@@ -165,16 +239,44 @@ def potrs(
         _out_a, _out_b, _status = ffi_fn(_a, _b)
         return _out_a, _out_b, _status
 
+    @partial(jax.jit, donate_argnums=(0, 1))
+    @partial(
+        jax.shard_map,
+        mesh=mesh,
+        in_specs=(P(axis_name, None), P(None, None)),
+        out_specs=(P(None, None), P(None), P(None)),
+        check_vma=False,
+    )
+    def impl_with_logdet(_a, _b):
+        _a = _a.conj()
+        _out_a, _out_b, _status = ffi_fn(_a, _b)
+        _logdet = _cyclic_logdet_from_factor(
+            _out_a,
+            diag_devices=diag_devices,
+            diag_local_rows=diag_local_rows,
+            diag_cols=diag_cols,
+            axis_name=axis_name,
+        )
+        return _out_b, jnp.expand_dims(_logdet, axis=0), _status
+
     def fn(_a, _b):
         _a = pad_fn(_a)
+        if return_logdet:
+            _out_b, _logdet, _status = impl_with_logdet(_a, _b)
+            return _out_b, _logdet, _status
         _out_a, _out_b, _status = impl(_a, _b)
         return _out_b, _status
+
+    if return_logdet:
+        out, logdet, status = fn(a, b)
+        if return_status:
+            return out, logdet[0], status[0]
+        return out, logdet[0]
 
     out, status = fn(a, b)
     if return_status:
         return out, status[0]
-    else:
-        return out
+    return out
 
 
 def potrs_shardmap_ctx(a: Array, b: Array, T_A: int, pad=True) -> Tuple[Array, Array]:
