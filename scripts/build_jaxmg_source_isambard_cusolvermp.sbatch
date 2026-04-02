@@ -15,12 +15,25 @@ export REPO_DIR="${REPO_DIR:-$HOME/benchmark-src/jaxmg-cyclic_2d}"
 export GIT_URL="${GIT_URL:-https://github.com/JacobTutt/jaxmg}"
 export GIT_REF="${GIT_REF:-cyclic_2d}"
 export BUILD_DIR="${BUILD_DIR:-$REPO_DIR/build}"
-export ENV_NAME="${ENV_NAME:-jaxmg-cyclic-2d}"
+export ENV_NAME="${ENV_NAME:-}"
+export ENV_PREFIX="${ENV_PREFIX:-/projects/u6n/jaxmg-cyclic-2d-env}"
 
 mkdir -p "$RUN_ROOT"
 exec >"$RUN_ROOT/stdout.log" 2>"$RUN_ROOT/stderr.log"
 
-source "$HOME/miniforge3/bin/activate" "$ENV_NAME"
+if [[ -n "$ENV_NAME" && -n "$ENV_PREFIX" ]]; then
+  echo "Set only one of ENV_NAME or ENV_PREFIX" >&2
+  exit 1
+fi
+
+source "$HOME/miniforge3/etc/profile.d/conda.sh"
+if [[ -n "$ENV_NAME" ]]; then
+  conda activate "$ENV_NAME"
+  ACTIVE_ENV_LABEL="$ENV_NAME"
+else
+  conda activate "$ENV_PREFIX"
+  ACTIVE_ENV_LABEL="$ENV_PREFIX"
+fi
 module load gcc-native/13.2 cudatoolkit/24.11_12.6 nvhpc/24.11
 
 export CUDA_REAL_ROOT="${CUDA_REAL_ROOT:-/opt/nvidia/hpc_sdk/Linux_aarch64/24.11/cuda/12.6}"
@@ -46,7 +59,7 @@ export PYTHONUNBUFFERED=1
 
 echo "Run root:   $RUN_ROOT"
 echo "Repo:       $REPO_DIR"
-echo "Env:        $ENV_NAME"
+echo "Env:        $ACTIVE_ENV_LABEL"
 echo "Git ref:    $GIT_REF"
 
 if [[ -x "$GCC_NATIVE_ROOT/bin/gcc" && -x "$GCC_NATIVE_ROOT/bin/g++" ]]; then
