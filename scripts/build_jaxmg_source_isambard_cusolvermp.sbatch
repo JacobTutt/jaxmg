@@ -15,7 +15,7 @@ export REPO_DIR="${REPO_DIR:-$HOME/benchmark-src/jaxmg-cyclic_2d}"
 export GIT_URL="${GIT_URL:-https://github.com/JacobTutt/jaxmg}"
 export GIT_REF="${GIT_REF:-cyclic_2d}"
 export BUILD_DIR="${BUILD_DIR:-$REPO_DIR/build}"
-export ENV_NAME="${ENV_NAME:-bayeseor-cusolvermp}"
+export ENV_NAME="${ENV_NAME:-jaxmg-cyclic-2d}"
 
 mkdir -p "$RUN_ROOT"
 exec >"$RUN_ROOT/stdout.log" 2>"$RUN_ROOT/stderr.log"
