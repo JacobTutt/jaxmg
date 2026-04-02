@@ -21,19 +21,32 @@ fi
 
 if [[ -n "$TARGET_ENV" ]]; then
   activate_target="$TARGET_ENV"
+  lock_name="$HOME/.cache/jaxmg-env-lock-${TARGET_ENV}"
   if conda env list | awk '{print $1}' | grep -qx "$TARGET_ENV"; then
     echo "Environment $activate_target already exists"
   else
     echo "Cloning $SOURCE_ENV into $activate_target"
+    mkdir -p "$(dirname "$lock_name")"
+    if ! mkdir "$lock_name" 2>/dev/null; then
+      echo "Another bootstrap is already running for $activate_target" >&2
+      exit 1
+    fi
+    trap 'rmdir "$lock_name"' EXIT
     conda create -y -n "$TARGET_ENV" --clone "$SOURCE_ENV"
   fi
 else
   mkdir -p "$(dirname "$TARGET_PREFIX")"
   activate_target="$TARGET_PREFIX"
+  lock_name="${TARGET_PREFIX}.lock"
   if [[ -d "$TARGET_PREFIX" ]]; then
     echo "Environment $activate_target already exists"
   else
     echo "Cloning $SOURCE_ENV into $activate_target"
+    if ! mkdir "$lock_name" 2>/dev/null; then
+      echo "Another bootstrap is already running for $activate_target" >&2
+      exit 1
+    fi
+    trap 'rmdir "$lock_name"' EXIT
     conda create -y -p "$TARGET_PREFIX" --clone "$SOURCE_ENV"
   fi
 fi
