@@ -2,8 +2,11 @@ import pytest
 
 from jaxmg._block_cyclic_2d import (
     choose_process_grid,
+    global_to_local_index,
     local_leading_dimension,
     local_matrix_shape,
+    local_rhs_shape,
+    make_block_cyclic_layout,
     numroc,
     owning_process_col,
     owning_process_row,
@@ -62,3 +65,74 @@ def test_local_leading_dimension_uses_blas_safe_minimum():
 
     with pytest.raises(ValueError, match="non-negative"):
         local_leading_dimension(-1)
+
+
+def test_make_block_cyclic_layout_reports_local_storage():
+    layout = make_block_cyclic_layout(
+        m=10,
+        n=6,
+        mb=2,
+        nb=3,
+        process_row=1,
+        process_col=0,
+        nprow=2,
+        npcol=2,
+    )
+    assert layout.local_rows == 4
+    assert layout.local_cols == 3
+    assert layout.lld == 4
+
+
+def test_global_to_local_index_returns_none_when_process_does_not_own_entry():
+    assert global_to_local_index(
+        global_row=3,
+        global_col=5,
+        mb=2,
+        nb=2,
+        process_row=0,
+        process_col=0,
+        nprow=2,
+        npcol=2,
+    ) is None
+
+
+def test_global_to_local_index_maps_owned_entries_to_local_coordinates():
+    assert global_to_local_index(
+        global_row=5,
+        global_col=4,
+        mb=2,
+        nb=2,
+        process_row=0,
+        process_col=0,
+        nprow=2,
+        npcol=2,
+    ) == (3, 2)
+    assert global_to_local_index(
+        global_row=3,
+        global_col=5,
+        mb=2,
+        nb=2,
+        process_row=1,
+        process_col=0,
+        nprow=2,
+        npcol=2,
+    ) == (1, 3)
+
+
+def test_single_rhs_block_cyclic_distribution_only_populates_one_process_column():
+    assert local_rhs_shape(8, mb=2, process_row=0, process_col=0, nprow=2, npcol=2) == (
+        4,
+        1,
+    )
+    assert local_rhs_shape(8, mb=2, process_row=1, process_col=0, nprow=2, npcol=2) == (
+        4,
+        1,
+    )
+    assert local_rhs_shape(8, mb=2, process_row=0, process_col=1, nprow=2, npcol=2) == (
+        4,
+        0,
+    )
+    assert local_rhs_shape(8, mb=2, process_row=1, process_col=1, nprow=2, npcol=2) == (
+        4,
+        0,
+    )

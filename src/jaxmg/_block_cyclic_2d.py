@@ -1,4 +1,20 @@
 import math
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class BlockCyclicLayout:
+    global_rows: int
+    global_cols: int
+    mb: int
+    nb: int
+    nprow: int
+    npcol: int
+    process_row: int
+    process_col: int
+    local_rows: int
+    local_cols: int
+    lld: int
 
 
 def choose_process_grid(world_size: int, nprow: int | None = None, npcol: int | None = None) -> tuple[int, int]:
@@ -117,3 +133,93 @@ def local_leading_dimension(local_rows: int) -> int:
             f"local_rows must be non-negative, received {local_rows}"
         )
     return max(1, local_rows)
+
+
+def make_block_cyclic_layout(
+    m: int,
+    n: int,
+    mb: int,
+    nb: int,
+    process_row: int,
+    process_col: int,
+    nprow: int,
+    npcol: int,
+) -> BlockCyclicLayout:
+    """Describe the local block-cyclic storage owned by a single process."""
+    local_rows, local_cols = local_matrix_shape(
+        m=m,
+        n=n,
+        mb=mb,
+        nb=nb,
+        myprow=process_row,
+        mypcol=process_col,
+        nprow=nprow,
+        npcol=npcol,
+    )
+    return BlockCyclicLayout(
+        global_rows=m,
+        global_cols=n,
+        mb=mb,
+        nb=nb,
+        nprow=nprow,
+        npcol=npcol,
+        process_row=process_row,
+        process_col=process_col,
+        local_rows=local_rows,
+        local_cols=local_cols,
+        lld=local_leading_dimension(local_rows),
+    )
+
+
+def global_to_local_index(
+    global_row: int,
+    global_col: int,
+    mb: int,
+    nb: int,
+    process_row: int,
+    process_col: int,
+    nprow: int,
+    npcol: int,
+) -> tuple[int, int] | None:
+    """Map a global matrix entry to rank-local column-major coordinates.
+
+    Returns ``None`` when the entry is not owned by the given process-grid
+    coordinates.
+    """
+    owner_row = owning_process_row(global_row, mb, nprow)
+    owner_col = owning_process_col(global_col, nb, npcol)
+    if owner_row != process_row or owner_col != process_col:
+        return None
+
+    block_row = global_row // mb
+    block_col = global_col // nb
+    local_block_row = block_row // nprow
+    local_block_col = block_col // npcol
+    local_row = local_block_row * mb + (global_row % mb)
+    local_col = local_block_col * nb + (global_col % nb)
+    return local_row, local_col
+
+
+def local_rhs_shape(
+    n: int,
+    mb: int,
+    process_row: int,
+    process_col: int,
+    nprow: int,
+    npcol: int,
+) -> tuple[int, int]:
+    """Return the local shape of a distributed single-RHS ``B`` matrix.
+
+    Under a standard 2D block-cyclic descriptor for a global ``(N, 1)`` RHS,
+    only one process-column owns the single global column.
+    """
+    return local_matrix_shape(
+        m=n,
+        n=1,
+        mb=mb,
+        nb=1,
+        myprow=process_row,
+        mypcol=process_col,
+        nprow=nprow,
+        npcol=npcol,
+    )
