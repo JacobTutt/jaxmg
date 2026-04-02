@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.25.2)
 project(JaxSolve)
+option(JAXMG_EXPERIMENTAL_CUSOLVERMP "Enable experimental cuSOLVERMp scaffolding" OFF)
 
 # Get CPM
 set(CPM_DOWNLOAD_VERSION 0.42.0)
@@ -39,6 +40,24 @@ find_package(CUDAToolkit REQUIRED)
 find_library(CUSOLVERMG_LIB cusolverMg
     HINTS "${CUDAToolkit_LIBRARY_DIR}" "${CUDA_TOOLKIT_ROOT_DIR}/lib64" "/usr/local/cuda/lib64"
     REQUIRED)
+if(JAXMG_EXPERIMENTAL_CUSOLVERMP)
+    find_package(MPI REQUIRED COMPONENTS CXX)
+    find_library(CUSOLVERMP_LIB cusolverMp
+        HINTS "${CUDAToolkit_LIBRARY_DIR}" "${CUDA_TOOLKIT_ROOT_DIR}/lib64" "/usr/local/cuda/lib64")
+    find_library(NCCL_LIB nccl
+        HINTS "${CUDAToolkit_LIBRARY_DIR}" "${CUDA_TOOLKIT_ROOT_DIR}/lib64" "/usr/local/cuda/lib64")
+    find_path(NCCL_INCLUDE_DIR nccl.h
+        HINTS "${CUDAToolkit_INCLUDE_DIRS}" "${CUDA_TOOLKIT_ROOT_DIR}/include" "/usr/local/cuda/include")
+    if(NOT CUSOLVERMP_LIB)
+        message(FATAL_ERROR "JAXMG_EXPERIMENTAL_CUSOLVERMP=ON but cusolverMp library was not found")
+    endif()
+    if(NOT NCCL_LIB)
+        message(FATAL_ERROR "JAXMG_EXPERIMENTAL_CUSOLVERMP=ON but NCCL library was not found")
+    endif()
+    if(NOT NCCL_INCLUDE_DIR)
+        message(FATAL_ERROR "JAXMG_EXPERIMENTAL_CUSOLVERMP=ON but nccl.h was not found")
+    endif()
+endif()
 find_package(CUDNN REQUIRED)
 message(STATUS "CUDA include directory: $ENV{CUDA_ROOT}")
 message(STATUS "CUDNN include directory: $ENV{CUDNN_ROOT}")
@@ -180,6 +199,11 @@ add_library(syevd_no_V_mp SHARED
     src/cuda/utils/ipc_utils.cc
     ${jax_SOURCE_DIR}/jaxlib/gpu/gpu_kernel_helpers.cc
 )
+if(JAXMG_EXPERIMENTAL_CUSOLVERMP)
+    add_library(jaxmg_cusolvermp_context STATIC
+        src/cuda/utils/cusolvermp_context.cc
+    )
+endif()
 
 # Make sure we can see "thirdparty/gpus" and jax
 set(SRC_CUDA_INCLUDE ${CMAKE_SOURCE_DIR}/src/cuda/include)
@@ -193,6 +217,15 @@ target_include_directories(syevd PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${
 target_include_directories(syevd_mp PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
 target_include_directories(syevd_no_V PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
 target_include_directories(syevd_no_V_mp PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
+if(JAXMG_EXPERIMENTAL_CUSOLVERMP)
+    target_include_directories(jaxmg_cusolvermp_context PUBLIC
+        ${CMAKE_SOURCE_DIR}
+        ${SRC_CUDA_INCLUDE}
+        ${SRC_CUDA_ROOT}
+        ${MPI_CXX_INCLUDE_DIRS}
+        ${NCCL_INCLUDE_DIR}
+    )
+endif()
 
 # Set the CUDA architecture
 set_target_properties(cyclic PROPERTIES
@@ -307,6 +340,17 @@ target_link_libraries(syevd_no_V_mp
     ${CUSOLVERMG_LIB}
     cuda
 )
+if(JAXMG_EXPERIMENTAL_CUSOLVERMP)
+    target_link_libraries(jaxmg_cusolvermp_context
+        absl::strings
+        absl::status
+        absl::statusor
+        MPI::MPI_CXX
+        ${CUSOLVERMP_LIB}
+        ${NCCL_LIB}
+        CUDA::cudart
+    )
+endif()
 # Make install targets
 install(TARGETS cyclic
     LIBRARY DESTINATION ${CMAKE_SOURCE_DIR}/${BIN_DST}
@@ -347,4 +391,3 @@ install(TARGETS syevd_no_V_mp
 # cmake --build . --target potri && cmake --install .
 # cmake --build . --target syevd && cmake --install .
 # cmake --build . --target syevd_no_V && cmake --install .
-
