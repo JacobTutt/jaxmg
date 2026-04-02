@@ -9,6 +9,11 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 
 source "$HOME/miniforge3/etc/profile.d/conda.sh"
 
+prefix_has_python() {
+  local prefix="$1"
+  [[ -x "$prefix/bin/python" || -x "$prefix/bin/python3" ]]
+}
+
 if ! conda env list | awk '{print $1}' | grep -qx "$SOURCE_ENV"; then
   echo "Source environment $SOURCE_ENV does not exist" >&2
   exit 1
@@ -21,6 +26,7 @@ fi
 
 if [[ -n "$TARGET_ENV" ]]; then
   activate_target="$TARGET_ENV"
+  target_is_prefix=0
   lock_name="$HOME/.cache/jaxmg-env-lock-${TARGET_ENV}"
   if conda env list | awk '{print $1}' | grep -qx "$TARGET_ENV"; then
     echo "Environment $activate_target already exists"
@@ -37,9 +43,21 @@ if [[ -n "$TARGET_ENV" ]]; then
 else
   mkdir -p "$(dirname "$TARGET_PREFIX")"
   activate_target="$TARGET_PREFIX"
+  target_is_prefix=1
   lock_name="${TARGET_PREFIX}.lock"
   if [[ -d "$TARGET_PREFIX" ]]; then
-    echo "Environment $activate_target already exists"
+    if prefix_has_python "$TARGET_PREFIX"; then
+      echo "Environment $activate_target already exists"
+    else
+      echo "Environment $activate_target is incomplete, recreating"
+      rm -rf "$TARGET_PREFIX"
+      if ! mkdir "$lock_name" 2>/dev/null; then
+        echo "Another bootstrap is already running for $activate_target" >&2
+        exit 1
+      fi
+      trap 'rmdir "$lock_name"' EXIT
+      conda create -y -p "$TARGET_PREFIX" --clone "$SOURCE_ENV"
+    fi
   else
     echo "Cloning $SOURCE_ENV into $activate_target"
     if ! mkdir "$lock_name" 2>/dev/null; then
@@ -52,6 +70,10 @@ else
 fi
 
 conda activate "$activate_target"
+if [[ "$target_is_prefix" -eq 1 ]] && ! prefix_has_python "$activate_target"; then
+  echo "Environment $activate_target does not contain a Python executable" >&2
+  exit 1
+fi
 
 echo "Installing migration-only extras into $activate_target"
 "$PYTHON_BIN" -m pip install --upgrade pip
