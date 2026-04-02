@@ -11,6 +11,19 @@ from ._cyclic_1d import calculate_padding, pad_rows
 from ._setup import ensure_init_jaxmg_backend
 
 
+def _normalize_single_rhs(b: Array) -> Array:
+    """Normalize ``b`` to a single-column 2D right-hand side."""
+    assert b.ndim <= 2, "b must be a 1D or 2D array."
+    if b.ndim == 1:
+        return jnp.expand_dims(b, axis=1)
+    if b.shape[1] != 1:
+        raise ValueError(
+            "potrs currently supports only a single right-hand side; "
+            f"received b with shape {b.shape}."
+        )
+    return b
+
+
 def potrs(
     a: Array,
     b: Array,
@@ -40,8 +53,9 @@ def potrs(
         a (Array): 2D, symmetric matrix representing the coefficient matrix.
             Expected to be sharded across the mesh along the first (row) axis
             using a single ``PartitionSpec``: ``P(<axis_name>, None)``.
-        b (Array): 2D right-hand side. Expected to be replicated across
-            devices with ``PartitionSpec`` ``P(None, None)`` or ``P(None)``.
+        b (Array): Right-hand side with shape ``(N,)`` or ``(N, 1)``.
+            Expected to be replicated across devices with ``PartitionSpec``
+            ``P(None, None)`` or ``P(None)``.
         T_A (int): Tile width used by the native solver. Each
             local shard length must be a multiple of ``T_A``. If the user provides a
             ``T_A`` that is incompatible with the shard size we pad the matrix
@@ -96,12 +110,9 @@ def potrs(
             "A must be sharded along the columns with PartitionSpec P(None, str)."
         )
 
-    assert a.shape[1] == b.shape[0], "A and b must have the same number of columns."
     assert a.ndim == 2, "a must be a 2D array."
-    assert b.ndim <= 2, "b must be a 1D or 2D array."
-    # ensure b is always 2D
-    if b.ndim == 1:
-        b = jnp.expand_dims(b, axis=1)
+    b = _normalize_single_rhs(b)
+    assert a.shape[1] == b.shape[0], "A and b must have the same number of columns."
 
     N_rows, N = a.shape
     axis_name = in_specs._partitions[0]
@@ -200,8 +211,8 @@ def potrs_shardmap_ctx(a: Array, b: Array, T_A: int, pad=True) -> Tuple[Array, A
     Args:
         a (Array): 2D coefficient matrix of shape ``(N_rows // ndev, N)``. Must be
             symmetric for correct solver behavior.
-        b (Array): 2D right-hand side. Its first dimension must equal the
-            number of columns of ``a`` (i.e. ``a.shape[1] == b.shape[0]``).
+        b (Array): Right-hand side with shape ``(N,)`` or ``(N, 1)``. Its
+            first dimension must equal the number of columns of ``a``.
         T_A (int): Tile width used by the native solver. Each
             local shard length must be a multiple of ``T_A``. If the user provides a
             ``T_A`` that is incompatible with the shard size we pad the matrix
@@ -230,9 +241,9 @@ def potrs_shardmap_ctx(a: Array, b: Array, T_A: int, pad=True) -> Tuple[Array, A
     """
     ensure_init_jaxmg_backend()
     ndev = int(os.environ["JAXMG_NUMBER_OF_DEVICES"])
-    assert a.shape[1] == b.shape[0], "A and b must have the same number of rows."
     assert a.ndim == 2, "a must be a 2D array."
-    assert b.ndim == 2, "b must be a 2D array."
+    b = _normalize_single_rhs(b)
+    assert a.shape[1] == b.shape[0], "A and b must have the same number of columns."
     shard_size, N = a.shape
 
     # Keep b in column-major layout

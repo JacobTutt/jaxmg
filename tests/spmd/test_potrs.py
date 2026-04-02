@@ -173,18 +173,16 @@ else:
         assert jnp.allclose(out, expected_out, atol=1e-4)
 
 
-    def test_potrs_multiple_rhs():
+    def test_potrs_multiple_rhs_raises():
         N = ndev * 2
         T_A = 1
         dtype = jnp.float64
         A = random_psd(N, dtype=dtype, seed=5678)
         b = jnp.arange(N * 3, dtype=dtype).reshape(N, 3) + 1
-        cfac = jax.scipy.linalg.cho_factor(A)
-        expected_out = jax.scipy.linalg.cho_solve(cfac, b)
         _A = jax.device_put(A, NamedSharding(mesh, P("x", None)))
         _b = jax.device_put(b, NamedSharding(mesh, P(None, None)))
-        out = jitted_potrs(_A, _b, T_A)
-        assert jnp.allclose(out, expected_out, atol=1e-4)
+        with pytest.raises(ValueError, match="only a single right-hand side"):
+            jitted_potrs(_A, _b, T_A)
 
 
     def test_potrs_loop_shm():

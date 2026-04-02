@@ -31,15 +31,12 @@ def test_shape_mismatch_raises_assertion():
         potrs(A, b, T_A, mesh=mesh, in_specs=(P("x", None), ))
 
 
-def test_a_1d_raises_indexerror():
-    # Due to the current implementation ordering, passing a 1D `a` raises an
-    # IndexError when the code attempts to access a.shape[1]. This documents
-    # the current behavior (should be tightened in future).
+def test_a_1d_raises_assertion():
     A = jnp.ones((4,))
     b = jnp.ones((4, 1))
     T_A = 1
     mesh = jax.make_mesh((jax.local_device_count(),), ("x",))
-    with pytest.raises(IndexError):
+    with pytest.raises(AssertionError, match="a must be a 2D array."):
         potrs(A, b, T_A, mesh=mesh, in_specs=(P("x", None), ))
 
 
@@ -49,4 +46,13 @@ def test_b_1d_raises_assertion():
     T_A = 1
     mesh = jax.make_mesh((jax.local_device_count(),), ("x",))
     with pytest.raises(AssertionError, match="b must be a 1D or 2D array."):
+        potrs(A, b, T_A, mesh=mesh, in_specs=(P("x", None), ))
+
+
+def test_multi_rhs_raises_valueerror():
+    A = jnp.eye(4)
+    b = jnp.ones((4, 3))
+    T_A = 1
+    mesh = jax.make_mesh((jax.local_device_count(),), ("x",))
+    with pytest.raises(ValueError, match="only a single right-hand side"):
         potrs(A, b, T_A, mesh=mesh, in_specs=(P("x", None), ))
