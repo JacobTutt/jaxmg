@@ -6,17 +6,21 @@
 #SBATCH --gpus-per-node=1
 #SBATCH --time=01:00:00
 #SBATCH --chdir=/projects/u6n
-#SBATCH --output=/projects/u6n/logs/%x-%j.out
-#SBATCH --error=/projects/u6n/logs/%x-%j.err
 
 set -euo pipefail
 
-export REPO_DIR="${REPO_DIR:-$HOME/benchmark-src/jaxmg}"
+export RUN_NAME="${RUN_NAME:-build_jaxmg_cusolvermp}"
+export RUN_ROOT="${RUN_ROOT:-/projects/u6n/${RUN_NAME}_${SLURM_JOB_ID}}"
+export REPO_DIR="${REPO_DIR:-$HOME/benchmark-src/jaxmg-cyclic_2d}"
 export GIT_URL="${GIT_URL:-https://github.com/JacobTutt/jaxmg}"
 export GIT_REF="${GIT_REF:-cyclic_2d}"
 export BUILD_DIR="${BUILD_DIR:-$REPO_DIR/build}"
+export ENV_NAME="${ENV_NAME:-bayeseor-cusolvermp}"
 
-source "$HOME/miniforge3/bin/activate" bayeseor
+mkdir -p "$RUN_ROOT"
+exec >"$RUN_ROOT/stdout.log" 2>"$RUN_ROOT/stderr.log"
+
+source "$HOME/miniforge3/bin/activate" "$ENV_NAME"
 module load gcc-native/13.2 cudatoolkit/24.11_12.6 nvhpc/24.11
 
 export CUDA_REAL_ROOT="${CUDA_REAL_ROOT:-/opt/nvidia/hpc_sdk/Linux_aarch64/24.11/cuda/12.6}"
@@ -39,6 +43,11 @@ export NCCL_LIB="${NCCL_LIB:-/opt/nvidia/hpc_sdk/Linux_aarch64/24.11/comm_libs/1
 export NCCL_INCLUDE_DIR="${NCCL_INCLUDE_DIR:-/opt/nvidia/hpc_sdk/Linux_aarch64/24.11/comm_libs/12.6/include}"
 export JAX_VERSION="${JAX_VERSION:-0.9.1}"
 export PYTHONUNBUFFERED=1
+
+echo "Run root:   $RUN_ROOT"
+echo "Repo:       $REPO_DIR"
+echo "Env:        $ENV_NAME"
+echo "Git ref:    $GIT_REF"
 
 if [[ -x "$GCC_NATIVE_ROOT/bin/gcc" && -x "$GCC_NATIVE_ROOT/bin/g++" ]]; then
   export CC="$GCC_NATIVE_ROOT/bin/gcc"
