@@ -120,6 +120,20 @@ def _load(module, libraries):
                 os.environ.get("CUSOLVERMG_LIB"),
             ]
         )
+    elif module == "cusolvermp":
+        env_candidates.extend(
+            [
+                os.environ.get("JAXMG_CUSOLVERMP_LIB"),
+                os.environ.get("CUSOLVERMP_LIB"),
+            ]
+        )
+    elif module == "nccl":
+        env_candidates.extend(
+            [
+                os.environ.get("JAXMG_NCCL_LIB"),
+                os.environ.get("NCCL_LIB"),
+            ]
+        )
 
     try:
         m = importlib.import_module(f"nvidia.{module}")
@@ -133,6 +147,10 @@ def _load(module, libraries):
 
         if m is not None:
             candidates.append(str(pathlib.Path(m.__path__[0]) / "lib" / lib))
+
+        conda_prefix = os.environ.get("CONDA_PREFIX")
+        if conda_prefix:
+            candidates.append(str(pathlib.Path(conda_prefix) / "lib" / lib))
 
         for candidate in candidates:
             try:
@@ -158,11 +176,16 @@ def _load_backend_dependencies(backend_family: str):
         return
 
     if backend_family == "mp":
+        if os.environ.get("JAXMG_ENABLE_REAL_CUSOLVERMP", "").strip() == "1":
+            _load("cusolvermp", ["libcusolverMp.so"])
+            _load("nccl", ["libnccl.so.2", "libnccl.so"])
+            return
         if os.environ.get("JAXMG_ENABLE_MP_STUB", "").strip() == "1":
             return
         raise NotImplementedError(
             "JAXMG_BACKEND_FAMILY=mp is recognized but not implemented yet. "
-            "Set JAXMG_ENABLE_MP_STUB=1 to allow experimental stub registration."
+            "Set JAXMG_ENABLE_MP_STUB=1 to allow experimental stub registration "
+            "or JAXMG_ENABLE_REAL_CUSOLVERMP=1 to require real cuSOLVERMp/NCCL dependencies."
         )
 
     raise ValueError(f"Unsupported JAXMg backend family: {backend_family}")

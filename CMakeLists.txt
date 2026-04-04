@@ -39,9 +39,29 @@ find_package(CUDAToolkit REQUIRED)
 find_library(CUSOLVERMG_LIB cusolverMg
     HINTS "${CUDAToolkit_LIBRARY_DIR}" "${CUDA_TOOLKIT_ROOT_DIR}/lib64" "/usr/local/cuda/lib64"
     REQUIRED)
+find_path(CUSOLVERMP_INCLUDE_DIR cusolverMp.h
+    HINTS "$ENV{CONDA_PREFIX}/include" "${CUDAToolkit_INCLUDE_DIRS}" "/usr/local/cuda/include")
+find_library(CUSOLVERMP_LIB cusolverMp
+    HINTS "$ENV{CONDA_PREFIX}/lib" "${CUDAToolkit_LIBRARY_DIR}" "${CUDA_TOOLKIT_ROOT_DIR}/lib64" "/usr/local/cuda/lib64")
+find_path(NCCL_INCLUDE_DIR nccl.h
+    HINTS "$ENV{CONDA_PREFIX}/include" "/usr/local/include")
+find_library(NCCL_LIB nccl
+    HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/local/cuda/lib64")
+set(HAVE_CUSOLVERMP OFF)
+if(CUSOLVERMP_INCLUDE_DIR AND CUSOLVERMP_LIB AND NCCL_INCLUDE_DIR AND NCCL_LIB)
+    set(HAVE_CUSOLVERMP ON)
+endif()
 find_package(CUDNN REQUIRED)
 message(STATUS "CUDA include directory: $ENV{CUDA_ROOT}")
 message(STATUS "CUDNN include directory: $ENV{CUDNN_ROOT}")
+if(HAVE_CUSOLVERMP)
+    message(STATUS "cuSOLVERMp include directory: ${CUSOLVERMP_INCLUDE_DIR}")
+    message(STATUS "cuSOLVERMp library: ${CUSOLVERMP_LIB}")
+    message(STATUS "NCCL include directory: ${NCCL_INCLUDE_DIR}")
+    message(STATUS "NCCL library: ${NCCL_LIB}")
+else()
+    message(STATUS "cuSOLVERMp/NCCL not found; building mp targets in stub-only mode")
+endif()
 # Enable CUDA 
 enable_language(CUDA)
 ## Set backend install subdirectory based on CUDA major version
@@ -198,6 +218,12 @@ target_include_directories(potri PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${
 target_include_directories(potri_mp PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
 target_include_directories(syevd PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
 target_include_directories(syevd_cusolvermp PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
+if(HAVE_CUSOLVERMP)
+target_include_directories(potrs_cusolvermp PUBLIC ${CUSOLVERMP_INCLUDE_DIR} ${NCCL_INCLUDE_DIR})
+target_include_directories(syevd_cusolvermp PUBLIC ${CUSOLVERMP_INCLUDE_DIR} ${NCCL_INCLUDE_DIR})
+target_compile_definitions(potrs_cusolvermp PRIVATE JAXMG_HAVE_CUSOLVERMP=1 JAXMG_HAVE_NCCL=1)
+target_compile_definitions(syevd_cusolvermp PRIVATE JAXMG_HAVE_CUSOLVERMP=1 JAXMG_HAVE_NCCL=1)
+endif()
 target_include_directories(syevd_mp PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
 target_include_directories(syevd_no_V PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
 target_include_directories(syevd_no_V_mp PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
@@ -263,6 +289,12 @@ target_link_libraries(potrs_cusolvermp
     CUDA::cupti
     cuda
 )
+if(HAVE_CUSOLVERMP)
+target_link_libraries(potrs_cusolvermp
+    ${CUSOLVERMP_LIB}
+    ${NCCL_LIB}
+)
+endif()
 target_link_libraries(potrs_mp
     absl::strings
     absl::status
@@ -307,6 +339,12 @@ target_link_libraries(syevd_cusolvermp
     CUDA::cupti
     cuda
 )
+if(HAVE_CUSOLVERMP)
+target_link_libraries(syevd_cusolvermp
+    ${CUSOLVERMP_LIB}
+    ${NCCL_LIB}
+)
+endif()
 target_link_libraries(syevd_mp
     absl::strings
     absl::status

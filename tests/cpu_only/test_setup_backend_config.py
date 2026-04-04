@@ -1,4 +1,5 @@
 import pytest
+from unittest import mock
 
 from jaxmg._setup import (
     _BackendFamilyDefinition,
@@ -78,3 +79,13 @@ def test_load_backend_dependencies_allows_opted_in_mp_stub(monkeypatch):
     monkeypatch.setenv("JAXMG_ENABLE_MP_STUB", "1")
 
     _load_backend_dependencies("mp")
+
+
+def test_load_backend_dependencies_allows_real_cusolvermp(monkeypatch):
+    monkeypatch.setenv("JAXMG_ENABLE_REAL_CUSOLVERMP", "1")
+
+    with mock.patch("jaxmg._setup._load") as load:
+        _load_backend_dependencies("mp")
+
+    load.assert_any_call("cusolvermp", ["libcusolverMp.so"])
+    load.assert_any_call("nccl", ["libnccl.so.2", "libnccl.so"])
