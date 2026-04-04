@@ -34,7 +34,13 @@ _CUDA_TARGETS = {
 
 
 def _resolve_backend_family():
-    return "mg"
+    backend_family = os.environ.get("JAXMG_BACKEND_FAMILY", "mg").strip().lower()
+    if backend_family != "mg":
+        raise ValueError(
+            f"Unsupported JAXMg backend family: {backend_family}. "
+            "Current supported values: mg"
+        )
+    return backend_family
 
 
 def _resolve_cuda_bin_dir():
