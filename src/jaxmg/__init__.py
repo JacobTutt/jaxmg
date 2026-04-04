@@ -22,6 +22,7 @@ from ._block_cyclic_2d import (
     process_grid_rank_order,
 )
 from ._cyclic_2d import Cyclic2DPlan, cyclic_2d, plan_cyclic_2d_layout
+from ._distributed_runtime import DistributedRuntimePlan, plan_distributed_runtime
 
 __all__ = [
     "potrs",
@@ -50,4 +51,6 @@ __all__ = [
     "Cyclic2DPlan",
     "cyclic_2d",
     "plan_cyclic_2d_layout",
+    "DistributedRuntimePlan",
+    "plan_distributed_runtime",
 ]
