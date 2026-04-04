@@ -213,6 +213,8 @@ add_library(potrs SHARED
 )
 add_library(potrs_cusolvermp SHARED
     src/cuda/potrs_cusolvermp_stub.cc
+    src/cuda/utils/cusolvermp_context.cc
+    ${jax_SOURCE_DIR}/jaxlib/gpu/gpu_kernel_helpers.cc
 )
 add_library(potrs_mp SHARED
     src/cuda/potrs_mp.cu
@@ -242,6 +244,8 @@ add_library(syevd SHARED
 )
 add_library(syevd_cusolvermp SHARED
     src/cuda/syevd_cusolvermp_stub.cc
+    src/cuda/utils/cusolvermp_context.cc
+    ${jax_SOURCE_DIR}/jaxlib/gpu/gpu_kernel_helpers.cc
 )
 add_library(syevd_mp SHARED
     src/cuda/syevd_mp.cu
