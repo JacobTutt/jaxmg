@@ -134,20 +134,24 @@ def _load_backend_dependencies(backend_family: str):
     raise ValueError(f"Unsupported JAXMg backend family: {backend_family}")
 
 
+def _initialize_cuda_backend():
+    backend_family = _resolve_backend_family()
+    bin_dir = _resolve_cuda_bin_dir()
+
+    _load_backend_dependencies(backend_family)
+
+    jax.config.update("jax_enable_x64", True)
+    mode, n_devices_per_node = _resolve_runtime_mode()
+
+    # set if not set already
+    os.environ.setdefault("JAXMG_NUMBER_OF_DEVICES", str(n_devices_per_node))
+
+    _register_cuda_targets(bin_dir, backend_family, mode)
+
+
 def _initialize():
     if any("gpu" == d.platform for d in jax.devices()):
-        backend_family = _resolve_backend_family()
-        bin_dir = _resolve_cuda_bin_dir()
-
-        _load_backend_dependencies(backend_family)
-
-        jax.config.update("jax_enable_x64", True)
-        mode, n_devices_per_node = _resolve_runtime_mode()
-                
-        # set if not set already
-        os.environ.setdefault("JAXMG_NUMBER_OF_DEVICES", str(n_devices_per_node))
-
-        _register_cuda_targets(bin_dir, backend_family, mode)
+        _initialize_cuda_backend()
 
     else:
         warnings.warn(
