@@ -42,6 +42,11 @@ find_path(CUSOLVERMP_INCLUDE_DIR cusolverMp.h
     HINTS "$ENV{CONDA_PREFIX}/include" "${CUDAToolkit_INCLUDE_DIRS}" "/usr/local/cuda/include")
 find_library(CUSOLVERMP_LIB cusolverMp
     HINTS "$ENV{CONDA_PREFIX}/lib" "${CUDAToolkit_LIBRARY_DIR}" "${CUDA_TOOLKIT_ROOT_DIR}/lib64" "/usr/local/cuda/lib64")
+find_path(CUDA_MATH_INCLUDE_DIR cublas_v2.h
+    HINTS
+        "$ENV{CONDA_PREFIX}/lib/python3.11/site-packages/nvidia/cublas/include"
+        "/opt/nvidia/hpc_sdk/Linux_aarch64/24.11/math_libs/${CUDAToolkit_VERSION_MAJOR}.${CUDAToolkit_VERSION_MINOR}/targets/sbsa-linux/include"
+        "/opt/nvidia/hpc_sdk/Linux_aarch64/24.11/math_libs/12.6/targets/sbsa-linux/include")
 find_path(NCCL_INCLUDE_DIR nccl.h
     HINTS "$ENV{CONDA_PREFIX}/include" "/usr/local/include")
 find_library(NCCL_LIB nccl
@@ -118,13 +123,40 @@ file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/third_party/gpus)
 set(CUDA_THIRD_PARTY_ROOT ${CMAKE_SOURCE_DIR}/third_party/gpus/cuda)
 file(REMOVE_RECURSE ${CUDA_THIRD_PARTY_ROOT})
 file(MAKE_DIRECTORY ${CUDA_THIRD_PARTY_ROOT})
+file(MAKE_DIRECTORY ${CUDA_THIRD_PARTY_ROOT}/include)
 list(GET CUDAToolkit_INCLUDE_DIRS 0 CUDA_PRIMARY_INCLUDE_DIR)
-execute_process(
-    COMMAND ln -sfn ${CUDA_PRIMARY_INCLUDE_DIR} ${CUDA_THIRD_PARTY_ROOT}/include
-    RESULT_VARIABLE ln_result
+set(CUDA_TOOLKIT_HEADERS
+    cooperative_groups.h
+    cuComplex.h
+    cuda.h
+    cuda_fp8.h
 )
-if(NOT ln_result EQUAL 0)
-    message(FATAL_ERROR "Failed to create CUDA include symlink: ${CUDA_PRIMARY_INCLUDE_DIR}")
+foreach(header IN LISTS CUDA_TOOLKIT_HEADERS)
+    execute_process(
+        COMMAND ln -sfn ${CUDA_PRIMARY_INCLUDE_DIR}/${header} ${CUDA_THIRD_PARTY_ROOT}/include/${header}
+        RESULT_VARIABLE ln_result
+    )
+    if(NOT ln_result EQUAL 0)
+        message(FATAL_ERROR "Failed to create CUDA toolkit header symlink: ${CUDA_PRIMARY_INCLUDE_DIR}/${header}")
+    endif()
+endforeach()
+if(CUDA_MATH_INCLUDE_DIR)
+    set(CUDA_MATH_HEADERS
+        cublas_v2.h
+        cufft.h
+        cusolverDn.h
+        cusolver_common.h
+        cusparse.h
+    )
+    foreach(header IN LISTS CUDA_MATH_HEADERS)
+        execute_process(
+            COMMAND ln -sfn ${CUDA_MATH_INCLUDE_DIR}/${header} ${CUDA_THIRD_PARTY_ROOT}/include/${header}
+            RESULT_VARIABLE ln_result
+        )
+        if(NOT ln_result EQUAL 0)
+            message(FATAL_ERROR "Failed to create CUDA math header symlink: ${CUDA_MATH_INCLUDE_DIR}/${header}")
+        endif()
+    endforeach()
 endif()
 if(DEFINED ENV{CUDA_ROOT} AND NOT "$ENV{CUDA_ROOT}" STREQUAL "" AND EXISTS "$ENV{CUDA_ROOT}/extras")
     execute_process(
@@ -235,23 +267,27 @@ add_library(syevd_no_V_mp SHARED
 # Make sure we can see "thirdparty/gpus" and jax
 set(SRC_CUDA_INCLUDE ${CMAKE_SOURCE_DIR}/src/cuda/include)
 set(SRC_CUDA_ROOT ${CMAKE_SOURCE_DIR}/src/cuda)
-target_include_directories(cyclic PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
-target_include_directories(potrs PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
-target_include_directories(potrs_cusolvermp PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
-target_include_directories(potrs_mp PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
-target_include_directories(potri PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
-target_include_directories(potri_mp PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
-target_include_directories(syevd PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
-target_include_directories(syevd_cusolvermp PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
+set(JAXMG_GPU_INCLUDE_DIRS ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT} ${CUDA_PRIMARY_INCLUDE_DIR})
+if(CUDA_MATH_INCLUDE_DIR)
+    list(APPEND JAXMG_GPU_INCLUDE_DIRS ${CUDA_MATH_INCLUDE_DIR})
+endif()
+target_include_directories(cyclic PUBLIC ${JAXMG_GPU_INCLUDE_DIRS})
+target_include_directories(potrs PUBLIC ${JAXMG_GPU_INCLUDE_DIRS})
+target_include_directories(potrs_cusolvermp PUBLIC ${JAXMG_GPU_INCLUDE_DIRS})
+target_include_directories(potrs_mp PUBLIC ${JAXMG_GPU_INCLUDE_DIRS})
+target_include_directories(potri PUBLIC ${JAXMG_GPU_INCLUDE_DIRS})
+target_include_directories(potri_mp PUBLIC ${JAXMG_GPU_INCLUDE_DIRS})
+target_include_directories(syevd PUBLIC ${JAXMG_GPU_INCLUDE_DIRS})
+target_include_directories(syevd_cusolvermp PUBLIC ${JAXMG_GPU_INCLUDE_DIRS})
 if(HAVE_CUSOLVERMP)
 target_include_directories(potrs_cusolvermp PUBLIC ${CUSOLVERMP_INCLUDE_DIR} ${NCCL_INCLUDE_DIR})
 target_include_directories(syevd_cusolvermp PUBLIC ${CUSOLVERMP_INCLUDE_DIR} ${NCCL_INCLUDE_DIR})
 target_compile_definitions(potrs_cusolvermp PRIVATE JAXMG_HAVE_CUSOLVERMP=1 JAXMG_HAVE_NCCL=1)
 target_compile_definitions(syevd_cusolvermp PRIVATE JAXMG_HAVE_CUSOLVERMP=1 JAXMG_HAVE_NCCL=1)
 endif()
-target_include_directories(syevd_mp PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
-target_include_directories(syevd_no_V PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
-target_include_directories(syevd_no_V_mp PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
+target_include_directories(syevd_mp PUBLIC ${JAXMG_GPU_INCLUDE_DIRS})
+target_include_directories(syevd_no_V PUBLIC ${JAXMG_GPU_INCLUDE_DIRS})
+target_include_directories(syevd_no_V_mp PUBLIC ${JAXMG_GPU_INCLUDE_DIRS})
 
 # Set the CUDA architecture
 set_target_properties(cyclic PROPERTIES
