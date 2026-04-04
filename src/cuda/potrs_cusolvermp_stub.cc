@@ -3,9 +3,12 @@
 #include <string>
 // Abseil
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
 // Jaxlib
 #include "jaxlib/ffi_helpers.h"
 #include "jaxlib/gpu/vendor.h"
+// JAXMg
+#include "include/cusolvermp_context.h"
 // XLA
 #include "xla/ffi/api/ffi.h"
 
@@ -113,45 +116,32 @@ ffi::Error PotrsCuSolverMpDispatch(
     return rhs_block_cols.error();
   }
 
-  if (*process_count <= 0 || *global_device_count <= 0)
+  jaxmg::CuSolverMpContextSpec spec{
+      .process_rank = static_cast<int>(*process_rank),
+      .process_count = static_cast<int>(*process_count),
+      .local_device_count = static_cast<int>(*local_device_count),
+      .local_device_index = static_cast<int>(*local_device_index),
+      .global_device_count = static_cast<int>(*global_device_count),
+      .process_grid =
+          {
+              .nprow = static_cast<int>(*process_grid_nprow),
+              .npcol = static_cast<int>(*process_grid_npcol),
+          },
+      .mb = static_cast<int>(*matrix_block_rows),
+      .nb = static_cast<int>(*matrix_block_cols),
+      .requires_mpi = true,
+      .requires_nccl = true,
+  };
+
+  auto issues = jaxmg::CuSolverMpPotrsStubContractIssues(
+      spec, static_cast<int>(*tile_size), static_cast<int>(*matrix_block_rows),
+      static_cast<int>(*matrix_block_cols), static_cast<int>(*rhs_block_rows),
+      static_cast<int>(*rhs_block_cols));
+  if (!issues.empty())
   {
     return ffi::Error::InvalidArgument(
-        "potrs_cusolvermp stub expected positive process/device counts.");
-  }
-  if (*process_rank < 0 || *process_rank >= *process_count)
-  {
-    return ffi::Error::InvalidArgument(
-        "potrs_cusolvermp stub expected 0 <= process_rank < process_count.");
-  }
-  if (*local_device_count != 1 || *local_device_index != 0)
-  {
-    return ffi::Error::InvalidArgument(
-        "potrs_cusolvermp stub expected one process per GPU with local_device_index == 0.");
-  }
-  if (*process_count != *global_device_count)
-  {
-    return ffi::Error::InvalidArgument(
-        "potrs_cusolvermp stub expected process_count == global_device_count.");
-  }
-  if (*process_grid_nprow <= 0 || *process_grid_npcol <= 0)
-  {
-    return ffi::Error::InvalidArgument(
-        "potrs_cusolvermp stub expected positive process-grid dimensions.");
-  }
-  if (*process_grid_nprow * *process_grid_npcol != *global_device_count)
-  {
-    return ffi::Error::InvalidArgument(
-        "potrs_cusolvermp stub expected nprow * npcol == global_device_count.");
-  }
-  if (*matrix_block_rows != *tile_size || *matrix_block_cols != *tile_size)
-  {
-    return ffi::Error::InvalidArgument(
-        "potrs_cusolvermp stub expected matrix block shape to match T_A.");
-  }
-  if (*rhs_block_cols != 1)
-  {
-    return ffi::Error::InvalidArgument(
-        "potrs_cusolvermp stub expected the initial cuSOLVERMp path to use NRHS=1.");
+        absl::StrFormat("potrs_cusolvermp stub contract validation failed: %s",
+                        absl::StrJoin(issues, " | ")));
   }
 
   constexpr size_t kPreviewChars = 160;

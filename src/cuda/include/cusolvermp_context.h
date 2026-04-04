@@ -44,6 +44,10 @@ bool CuSolverMpContextSpecIsLaunchReady(const CuSolverMpContextSpec &spec);
 std::vector<std::string> CuSolverMpContextLaunchIssues(
     const CuSolverMpContextSpec &spec);
 
+std::vector<std::string> CuSolverMpPotrsStubContractIssues(
+    const CuSolverMpContextSpec &spec, int tile_size, int matrix_block_rows,
+    int matrix_block_cols, int rhs_block_rows, int rhs_block_cols);
+
 } // namespace jaxmg
 
 #endif // JAXMG_CUSOLVERMP_CONTEXT_H_

@@ -69,4 +69,30 @@ bool CuSolverMpContextSpecIsLaunchReady(const CuSolverMpContextSpec &spec)
   return CuSolverMpContextLaunchIssues(spec).empty();
 }
 
+std::vector<std::string> CuSolverMpPotrsStubContractIssues(
+    const CuSolverMpContextSpec &spec, int tile_size, int matrix_block_rows,
+    int matrix_block_cols, int rhs_block_rows, int rhs_block_cols)
+{
+  std::vector<std::string> issues = CuSolverMpContextLaunchIssues(spec);
+
+  if (tile_size <= 0)
+  {
+    issues.push_back("T_A must be positive.");
+  }
+  if (matrix_block_rows != tile_size || matrix_block_cols != tile_size)
+  {
+    issues.push_back("potrs_cusolvermp expects the matrix block shape to match T_A.");
+  }
+  if (rhs_block_rows <= 0)
+  {
+    issues.push_back("potrs_cusolvermp expects a positive RHS block row count.");
+  }
+  if (rhs_block_cols != 1)
+  {
+    issues.push_back("potrs_cusolvermp expects NRHS=1 in the initial cuSOLVERMp path.");
+  }
+
+  return issues;
+}
+
 } // namespace jaxmg
