@@ -1,4 +1,9 @@
 from ._potrs import potrs, potrs_shardmap_ctx
+from ._potrs_cusolvermp import (
+    CuSolverMpPotrsStubRequest,
+    build_potrs_cusolvermp_stub_request,
+    potrs_cusolvermp,
+)
 from ._potri import potri, potri_shardmap_ctx, potri_symmetrize
 from ._syevd import syevd, syevd_shardmap_ctx
 from ._cyclic_1d import (
@@ -54,6 +59,9 @@ from ._cusolvermp_plan import PotrsCuSolverMpPlan, plan_potrs_cusolvermp
 __all__ = [
     "potrs",
     "potrs_shardmap_ctx",
+    "CuSolverMpPotrsStubRequest",
+    "build_potrs_cusolvermp_stub_request",
+    "potrs_cusolvermp",
     "potri",
     "potri_shardmap_ctx",
     "potri_symmetrize",
