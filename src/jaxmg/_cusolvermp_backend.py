@@ -4,6 +4,7 @@ from typing import Tuple
 from jax.sharding import Mesh
 
 from ._cusolvermp_runtime import CuSolverMpRuntimePlan, plan_cusolvermp_runtime
+from ._cusolvermp_targets import cusolvermp_target_specs
 
 
 @dataclass(frozen=True)
@@ -30,21 +31,15 @@ def plan_cusolvermp_backend(
 ) -> CuSolverMpBackendPlan:
     """Capture the future backend-level cuSOLVERMp integration contract."""
     runtime = plan_cusolvermp_runtime(mesh, process_grid=process_grid)
-    targets = (
+    targets = tuple(
         CuSolverMpTargetPlan(
-            operation="potrs",
-            ffi_target_name="potrs_cusolvermp",
-            library_name="libpotrs_cusolvermp.so",
-            symbol_name="PotrsCuSolverMpFFI",
+            operation=spec.operation,
+            ffi_target_name=spec.ffi_target_name,
+            library_name=spec.library_name,
+            symbol_name=spec.symbol_name,
             implemented=False,
-        ),
-        CuSolverMpTargetPlan(
-            operation="syevd",
-            ffi_target_name="syevd_cusolvermp",
-            library_name="libsyevd_cusolvermp.so",
-            symbol_name="SyevdCuSolverMpFFI",
-            implemented=False,
-        ),
+        )
+        for spec in cusolvermp_target_specs()
     )
     return CuSolverMpBackendPlan(
         backend_family="mp",

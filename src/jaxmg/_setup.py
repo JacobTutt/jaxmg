@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import jax
 import jax.extend
 
+from ._cusolvermp_targets import cusolvermp_setup_targets
 from .utils import JaxMgWarning
 
 _lib_dir = os.path.dirname(__file__)
@@ -31,28 +32,7 @@ _CUDA_TARGETS = {
             "syevd_no_V_mg": ("libsyevd_no_V_mp.so", "SyevdNoVMgMpFFI"),
         },
     },
-    "mp": {
-        "SPMD": {
-            "potrs_cusolvermp": (
-                "libpotrs_cusolvermp.so",
-                "PotrsCuSolverMpFFI",
-            ),
-            "syevd_cusolvermp": (
-                "libsyevd_cusolvermp.so",
-                "SyevdCuSolverMpFFI",
-            ),
-        },
-        "MPMD": {
-            "potrs_cusolvermp": (
-                "libpotrs_cusolvermp.so",
-                "PotrsCuSolverMpFFI",
-            ),
-            "syevd_cusolvermp": (
-                "libsyevd_cusolvermp.so",
-                "SyevdCuSolverMpFFI",
-            ),
-        },
-    },
+    "mp": cusolvermp_setup_targets(),
 }
 
 

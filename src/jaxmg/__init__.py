@@ -28,6 +28,7 @@ from ._cusolvermp_backend import (
     CuSolverMpTargetPlan,
     plan_cusolvermp_backend,
 )
+from ._cusolvermp_targets import CuSolverMpTargetSpec, cusolvermp_target_specs
 from ._cusolvermp_contract import CuSolverMpPotrsContract, plan_potrs_cusolvermp_contract
 from ._cusolvermp_runtime import (
     CuSolverMpRuntimePlan,
@@ -68,6 +69,8 @@ __all__ = [
     "CuSolverMpBackendPlan",
     "CuSolverMpTargetPlan",
     "plan_cusolvermp_backend",
+    "CuSolverMpTargetSpec",
+    "cusolvermp_target_specs",
     "CuSolverMpPotrsContract",
     "plan_potrs_cusolvermp_contract",
     "CuSolverMpRuntimePlan",
