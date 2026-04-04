@@ -2,6 +2,7 @@ import pytest
 
 from jaxmg._setup import (
     _BackendFamilyDefinition,
+    _load_backend_dependencies,
     _resolve_backend_family_definition,
     _resolve_cuda_targets,
 )
@@ -64,3 +65,16 @@ def test_resolve_cuda_targets_rejects_missing_mode(monkeypatch):
 
     with pytest.raises(ValueError, match="mode='INVALID'"):
         _resolve_cuda_targets(definition, "INVALID")
+
+
+def test_load_backend_dependencies_requires_opt_in_for_mp_stub(monkeypatch):
+    monkeypatch.delenv("JAXMG_ENABLE_MP_STUB", raising=False)
+
+    with pytest.raises(NotImplementedError, match="JAXMG_ENABLE_MP_STUB=1"):
+        _load_backend_dependencies("mp")
+
+
+def test_load_backend_dependencies_allows_opted_in_mp_stub(monkeypatch):
+    monkeypatch.setenv("JAXMG_ENABLE_MP_STUB", "1")
+
+    _load_backend_dependencies("mp")

@@ -158,8 +158,11 @@ def _load_backend_dependencies(backend_family: str):
         return
 
     if backend_family == "mp":
+        if os.environ.get("JAXMG_ENABLE_MP_STUB", "").strip() == "1":
+            return
         raise NotImplementedError(
-            "JAXMG_BACKEND_FAMILY=mp is recognized but not implemented yet."
+            "JAXMG_BACKEND_FAMILY=mp is recognized but not implemented yet. "
+            "Set JAXMG_ENABLE_MP_STUB=1 to allow experimental stub registration."
         )
 
     raise ValueError(f"Unsupported JAXMg backend family: {backend_family}")

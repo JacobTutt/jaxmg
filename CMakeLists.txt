@@ -134,6 +134,9 @@ add_library(potrs SHARED
     src/cuda/utils/shm.cc
     ${jax_SOURCE_DIR}/jaxlib/gpu/gpu_kernel_helpers.cc
 )
+add_library(potrs_cusolvermp SHARED
+    src/cuda/potrs_cusolvermp_stub.cc
+)
 add_library(potrs_mp SHARED
     src/cuda/potrs_mp.cu
     src/cuda/utils/jax_utils.cc
@@ -186,6 +189,7 @@ set(SRC_CUDA_INCLUDE ${CMAKE_SOURCE_DIR}/src/cuda/include)
 set(SRC_CUDA_ROOT ${CMAKE_SOURCE_DIR}/src/cuda)
 target_include_directories(cyclic PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
 target_include_directories(potrs PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
+target_include_directories(potrs_cusolvermp PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
 target_include_directories(potrs_mp PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
 target_include_directories(potri PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
 target_include_directories(potri_mp PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
@@ -199,6 +203,9 @@ set_target_properties(cyclic PROPERTIES
     CUDA_ARCHITECTURES "all"
 )
 set_target_properties(potrs PROPERTIES
+    CUDA_ARCHITECTURES "all"
+)
+set_target_properties(potrs_cusolvermp PROPERTIES
     CUDA_ARCHITECTURES "all"
 )
 set_target_properties(potrs_mp PROPERTIES
@@ -240,6 +247,13 @@ target_link_libraries(potrs
     CUDA::cusolver
     CUDA::cupti
     ${CUSOLVERMG_LIB}
+    cuda
+)
+target_link_libraries(potrs_cusolvermp
+    absl::strings
+    absl::status
+    absl::statusor
+    CUDA::cupti
     cuda
 )
 target_link_libraries(potrs_mp
@@ -314,6 +328,9 @@ install(TARGETS cyclic
 install(TARGETS potrs
     LIBRARY DESTINATION ${CMAKE_SOURCE_DIR}/${BIN_DST}
 )
+install(TARGETS potrs_cusolvermp
+    LIBRARY DESTINATION ${CMAKE_SOURCE_DIR}/${BIN_DST}
+)
 install(TARGETS potrs_mp
     LIBRARY DESTINATION ${CMAKE_SOURCE_DIR}/${BIN_DST}
 )
@@ -347,4 +364,3 @@ install(TARGETS syevd_no_V_mp
 # cmake --build . --target potri && cmake --install .
 # cmake --build . --target syevd && cmake --install .
 # cmake --build . --target syevd_no_V && cmake --install .
-

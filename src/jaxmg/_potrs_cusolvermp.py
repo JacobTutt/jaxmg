@@ -4,6 +4,7 @@ from typing import List, Tuple
 from jax import Array
 from jax.sharding import Mesh, PartitionSpec as P
 
+from ._setup import ensure_init_jaxmg_backend
 from ._cusolvermp_potrs_attributes import (
     CuSolverMpPotrsAttributes,
     build_potrs_cusolvermp_attributes,
@@ -66,6 +67,7 @@ def potrs_cusolvermp(
     the Python-side path can build the eventual call request end-to-end and
     then fail in a single explicit place until the native backend is linked.
     """
+    ensure_init_jaxmg_backend()
     request = build_potrs_cusolvermp_stub_request(
         a,
         b,
