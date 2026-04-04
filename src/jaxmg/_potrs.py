@@ -9,6 +9,7 @@ from typing import Tuple, List, Union
 from functools import partial
 
 from ._cyclic_1d import calculate_padding, pad_rows
+from ._cyclic_2d import Cyclic2DPlan, plan_cyclic_2d_layout
 from ._setup import ensure_init_jaxmg_backend
 
 
@@ -22,6 +23,12 @@ class _PotrsLayoutPlan:
     N: int
     shard_size: int
     padding: int
+
+
+@dataclass(frozen=True)
+class _PotrsMigrationPreview:
+    current: _PotrsLayoutPlan
+    cyclic_2d: Cyclic2DPlan
 
 
 def _plan_potrs_layout(
@@ -70,6 +77,28 @@ def _plan_potrs_layout(
         shard_size=shard_size,
         padding=padding,
     )
+
+
+def _plan_potrs_migration_preview(
+    a: Array,
+    b: Array,
+    T_A: int,
+    mesh: Mesh,
+    in_specs: Tuple[P] | List[P] | P,
+    pad: bool = True,
+    process_grid: Tuple[int, int] | None = None,
+) -> _PotrsMigrationPreview:
+    """Plan the current Mg layout and the future 2D cyclic layout side by side."""
+    current = _plan_potrs_layout(a, b, T_A, in_specs)
+    cyclic_2d = plan_cyclic_2d_layout(
+        current.a,
+        T_A,
+        mesh=mesh,
+        in_specs=in_specs,
+        pad=pad,
+        process_grid=process_grid,
+    )
+    return _PotrsMigrationPreview(current=current, cyclic_2d=cyclic_2d)
 
 
 def potrs(
