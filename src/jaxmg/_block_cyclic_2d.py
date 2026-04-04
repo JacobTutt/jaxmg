@@ -1,0 +1,85 @@
+from math import isqrt
+from typing import Tuple
+
+
+def choose_process_grid(num_devices: int) -> Tuple[int, int]:
+    """Choose a square-ish ``(nprow, npcol)`` grid whose product matches ``num_devices``."""
+    if num_devices <= 0:
+        raise ValueError("num_devices must be positive.")
+
+    for nprow in range(isqrt(num_devices), 0, -1):
+        if num_devices % nprow == 0:
+            return (nprow, num_devices // nprow)
+
+    raise AssertionError("Failed to construct a valid process grid.")
+
+
+def normalize_process_grid(
+    num_devices: int, process_grid: Tuple[int, int] | None = None
+) -> Tuple[int, int]:
+    """Validate or infer the process grid used for 2D block-cyclic ownership."""
+    if process_grid is None:
+        return choose_process_grid(num_devices)
+
+    if len(process_grid) != 2:
+        raise ValueError("process_grid must be a 2-tuple.")
+
+    nprow, npcol = process_grid
+    if nprow <= 0 or npcol <= 0:
+        raise ValueError("process_grid entries must be positive.")
+    if nprow * npcol != num_devices:
+        raise ValueError(
+            "process_grid must satisfy nprow * npcol == num_devices."
+        )
+    return (nprow, npcol)
+
+
+def numroc(
+    n: int,
+    block_size: int,
+    proc_coord: int,
+    nprocs: int,
+    src_proc: int = 0,
+) -> int:
+    """Return local rows/cols owned by a process under 2D block-cyclic distribution."""
+    if n < 0:
+        raise ValueError("n must be non-negative.")
+    if block_size <= 0:
+        raise ValueError("block_size must be positive.")
+    if nprocs <= 0:
+        raise ValueError("nprocs must be positive.")
+    if not 0 <= proc_coord < nprocs:
+        raise ValueError("proc_coord must satisfy 0 <= proc_coord < nprocs.")
+    if not 0 <= src_proc < nprocs:
+        raise ValueError("src_proc must satisfy 0 <= src_proc < nprocs.")
+
+    full_blocks, remainder = divmod(n, block_size)
+    local_blocks = full_blocks // nprocs
+    extra_blocks = full_blocks % nprocs
+    owning_rank = (proc_coord - src_proc) % nprocs
+
+    count = local_blocks * block_size
+    if owning_rank < extra_blocks:
+        count += block_size
+    if owning_rank == extra_blocks:
+        count += remainder
+    return count
+
+
+def local_block_cyclic_shape(
+    global_shape: Tuple[int, int],
+    block_shape: Tuple[int, int],
+    process_grid: Tuple[int, int],
+    process_coords: Tuple[int, int],
+    src_process: Tuple[int, int] = (0, 0),
+) -> Tuple[int, int]:
+    """Return the rank-local matrix shape for a 2D block-cyclic global matrix."""
+    nrows, ncols = global_shape
+    mb, nb = block_shape
+    nprow, npcol = process_grid
+    prow, pcol = process_coords
+    src_prow, src_pcol = src_process
+
+    local_rows = numroc(nrows, mb, prow, nprow, src_proc=src_prow)
+    local_cols = numroc(ncols, nb, pcol, npcol, src_proc=src_pcol)
+    return (local_rows, local_cols)
