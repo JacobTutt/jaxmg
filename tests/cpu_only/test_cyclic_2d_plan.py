@@ -4,12 +4,15 @@ import pytest
 
 from jax.sharding import PartitionSpec as P
 from jaxmg import (
+    block_padding,
     choose_process_grid,
     cyclic_2d,
     linear_rank_to_process_coords,
     local_block_cyclic_shape,
+    normalize_block_shape,
     normalize_process_grid,
     numroc,
+    padded_block_shape,
     plan_cyclic_2d_layout,
     process_grid_rank_order,
 )
@@ -39,6 +42,12 @@ def test_local_block_cyclic_shape_matches_even_2x2_case():
     assert local_block_cyclic_shape((8, 8), (2, 2), (2, 2), (1, 1)) == (4, 4)
 
 
+def test_block_shape_and_padding_helpers():
+    assert normalize_block_shape(3) == (3, 3)
+    assert block_padding(10, 4) == 2
+    assert padded_block_shape((10, 7), (4, 3)) == ((12, 9), (2, 2))
+
+
 def test_rank_order_is_row_major():
     assert linear_rank_to_process_coords(0, (2, 3)) == (0, 0)
     assert linear_rank_to_process_coords(4, (2, 3)) == (1, 1)
@@ -51,6 +60,8 @@ def test_plan_cyclic_2d_layout_uses_row_sharded_input_contract():
     plan = plan_cyclic_2d_layout(a, 2, mesh=mesh, in_specs=(P("x", None),))
     assert plan.global_shape == (4, 4)
     assert plan.block_shape == (2, 2)
+    assert plan.padded_shape == (4, 4)
+    assert plan.padding == (0, 0)
     assert plan.process_grid == (1, 1)
     assert plan.rank_order == ((0, 0),)
     assert plan.local_shapes == ((4, 4),)

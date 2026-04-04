@@ -11,10 +11,13 @@ from ._cyclic_1d import (
     plot_block_to_cyclic,
 )
 from ._block_cyclic_2d import (
+    block_padding,
     choose_process_grid,
+    normalize_block_shape,
     normalize_process_grid,
     numroc,
     local_block_cyclic_shape,
+    padded_block_shape,
     linear_rank_to_process_coords,
     process_grid_rank_order,
 )
@@ -35,10 +38,13 @@ __all__ = [
     "calculate_padding",
     "get_cols_cyclic",
     "plot_block_to_cyclic",
+    "block_padding",
     "choose_process_grid",
+    "normalize_block_shape",
     "normalize_process_grid",
     "numroc",
     "local_block_cyclic_shape",
+    "padded_block_shape",
     "linear_rank_to_process_coords",
     "process_grid_rank_order",
     "Cyclic2DPlan",

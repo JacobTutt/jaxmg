@@ -14,6 +14,25 @@ def choose_process_grid(num_devices: int) -> Tuple[int, int]:
     raise AssertionError("Failed to construct a valid process grid.")
 
 
+def normalize_block_shape(
+    T_A: int, block_shape: Tuple[int, int] | None = None
+) -> Tuple[int, int]:
+    """Validate or infer the 2D block shape used for a future cyclic_2d layout."""
+    if T_A <= 0:
+        raise ValueError("T_A must be positive.")
+
+    if block_shape is None:
+        return (T_A, T_A)
+
+    if len(block_shape) != 2:
+        raise ValueError("block_shape must be a 2-tuple.")
+
+    mb, nb = block_shape
+    if mb <= 0 or nb <= 0:
+        raise ValueError("block_shape entries must be positive.")
+    return (mb, nb)
+
+
 def normalize_process_grid(
     num_devices: int, process_grid: Tuple[int, int] | None = None
 ) -> Tuple[int, int]:
@@ -83,6 +102,26 @@ def local_block_cyclic_shape(
     local_rows = numroc(nrows, mb, prow, nprow, src_proc=src_prow)
     local_cols = numroc(ncols, nb, pcol, npcol, src_proc=src_pcol)
     return (local_rows, local_cols)
+
+
+def block_padding(size: int, block_size: int) -> int:
+    """Return padding needed so ``size + padding`` is a multiple of ``block_size``."""
+    if size < 0:
+        raise ValueError("size must be non-negative.")
+    if block_size <= 0:
+        raise ValueError("block_size must be positive.")
+    return (-size) % block_size
+
+
+def padded_block_shape(
+    global_shape: Tuple[int, int], block_shape: Tuple[int, int]
+) -> Tuple[Tuple[int, int], Tuple[int, int]]:
+    """Return ``(padded_shape, padding)`` for block-aligned 2D planning."""
+    nrows, ncols = global_shape
+    mb, nb = block_shape
+    row_padding = block_padding(nrows, mb)
+    col_padding = block_padding(ncols, nb)
+    return ((nrows + row_padding, ncols + col_padding), (row_padding, col_padding))
 
 
 def linear_rank_to_process_coords(

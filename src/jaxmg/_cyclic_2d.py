@@ -5,8 +5,10 @@ from jax import Array
 from jax.sharding import Mesh, PartitionSpec as P
 
 from ._block_cyclic_2d import (
+    normalize_block_shape,
     local_block_cyclic_shape,
     normalize_process_grid,
+    padded_block_shape,
     process_grid_rank_order,
 )
 
@@ -15,6 +17,8 @@ from ._block_cyclic_2d import (
 class Cyclic2DPlan:
     global_shape: Tuple[int, int]
     block_shape: Tuple[int, int]
+    padded_shape: Tuple[int, int]
+    padding: Tuple[int, int]
     process_grid: Tuple[int, int]
     rank_order: Tuple[Tuple[int, int], ...]
     local_shapes: Tuple[Tuple[int, int], ...]
@@ -76,11 +80,14 @@ def plan_cyclic_2d_layout(
     num_devices = mesh.devices.size
     process_grid = normalize_process_grid(num_devices, process_grid)
     nprow, npcol = process_grid
-    block_shape = (T_A, T_A)
+    block_shape = normalize_block_shape(T_A)
+    padded_shape, padding = padded_block_shape(a.shape, block_shape)
     rank_order = process_grid_rank_order(process_grid)
 
     local_shapes = tuple(
-        local_block_cyclic_shape(a.shape, block_shape, process_grid, (prow, pcol))
+        local_block_cyclic_shape(
+            padded_shape, block_shape, process_grid, (prow, pcol)
+        )
         for prow in range(nprow)
         for pcol in range(npcol)
     )
@@ -88,6 +95,8 @@ def plan_cyclic_2d_layout(
     return Cyclic2DPlan(
         global_shape=a.shape,
         block_shape=block_shape,
+        padded_shape=padded_shape,
+        padding=padding,
         process_grid=process_grid,
         rank_order=rank_order,
         local_shapes=local_shapes,
