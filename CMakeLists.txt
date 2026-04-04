@@ -351,8 +351,8 @@ target_link_libraries(potrs_cusolvermp
     absl::strings
     absl::status
     absl::statusor
+    CUDA::cudart
     CUDA::cupti
-    cuda
 )
 if(HAVE_CUSOLVERMP)
 target_link_libraries(potrs_cusolvermp
@@ -401,8 +401,8 @@ target_link_libraries(syevd_cusolvermp
     absl::strings
     absl::status
     absl::statusor
+    CUDA::cudart
     CUDA::cupti
-    cuda
 )
 if(HAVE_CUSOLVERMP)
 target_link_libraries(syevd_cusolvermp
