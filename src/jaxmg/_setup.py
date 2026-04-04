@@ -29,6 +29,36 @@ _MPMD_TARGETS = {
     "syevd_no_V_mg": ("libsyevd_no_V_mp.so", "SyevdNoVMgMpFFI"),
 }
 
+
+def _resolve_runtime_mode():
+    if not jax.distributed.is_initialized():
+        n_devices_per_node = jax.local_device_count()
+        mode = "SPMD"
+        return mode, n_devices_per_node
+
+    if "JAXMG_NUMBER_OF_DEVICES" in os.environ:
+        n_devices_per_node = int(os.environ["JAXMG_NUMBER_OF_DEVICES"])
+        n_machines = jax.device_count() // n_devices_per_node
+        warnings.warn(
+            f"Running in MPMD mode, with JAXMG_NUMBER_OF_DEVICES={n_devices_per_node}."
+            f"JAXMg is running on {n_machines} machines and {n_devices_per_node} devices per node."
+            "If this configuation is incorrect, the code will hang or error.",
+            JaxMgWarning,
+            stacklevel=5,
+        )
+    else:
+        n_devices_per_node = jax.device_count()
+        warnings.warn(
+            f"Running in MPMD mode with {n_devices_per_node} devices. "
+            "By default, we assume that computation is running in a single node. "
+            "To run JAXMg in a setting with multiple nodes, manually set JAXMG_NUMBER_OF_DEVICES to the number of devices per node"
+            " (see https://flatironinstitute.github.io/jaxmg/examples/spmd_mpmd/ for more details)",
+            JaxMgWarning,
+            stacklevel=5,
+        )
+    mode = "MPMD"
+    return mode, n_devices_per_node
+
 if not sys.platform.startswith("linux"):
     warnings.warn(
         f"Unsupported platform {sys.platform}, only Linux is supported. Non-Linux only works for docs.",
@@ -93,32 +123,7 @@ def _initialize():
             pass
 
         jax.config.update("jax_enable_x64", True)
-
-        if not jax.distributed.is_initialized():
-            n_devices_per_node = jax.local_device_count()
-            mode = "SPMD"
-        else:
-            if "JAXMG_NUMBER_OF_DEVICES" in os.environ:
-                n_devices_per_node = int(os.environ["JAXMG_NUMBER_OF_DEVICES"])
-                n_machines = jax.device_count() // int(os.environ["JAXMG_NUMBER_OF_DEVICES"])
-                warnings.warn(
-                    f"Running in MPMD mode, with JAXMG_NUMBER_OF_DEVICES={n_devices_per_node}."
-                    f"JAXMg is running on {n_machines} machines and {n_devices_per_node} devices per node."
-                    "If this configuation is incorrect, the code will hang or error.",
-                    JaxMgWarning,
-                    stacklevel=4,  # _initialize -> ensure_init_jaxmg_backend -> public fn -> user code
-                )
-            else:
-                n_devices_per_node = jax.device_count()
-                warnings.warn(
-                    f"Running in MPMD mode with {n_devices_per_node} devices. "
-                    "By default, we assume that computation is running in a single node. "
-                    "To run JAXMg in a setting with multiple nodes, manually set JAXMG_NUMBER_OF_DEVICES to the number of devices per node"
-                    " (see https://flatironinstitute.github.io/jaxmg/examples/spmd_mpmd/ for more details)",
-                    JaxMgWarning,
-                    stacklevel=4,  # _initialize -> ensure_init_jaxmg_backend -> public fn -> user code
-                )
-            mode = "MPMD"
+        mode, n_devices_per_node = _resolve_runtime_mode()
                 
         # set if not set already
         os.environ.setdefault("JAXMG_NUMBER_OF_DEVICES", str(n_devices_per_node))
