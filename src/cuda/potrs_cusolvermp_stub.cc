@@ -16,8 +16,8 @@ namespace JAX_GPU_NAMESPACE
 namespace ffi = ::xla::ffi;
 
 ffi::Error PotrsCuSolverMpDispatch(
-    gpuStream_t stream, ffi::ScratchAllocator scratch, ffi::AnyBuffer a, ffi::AnyBuffer b,
-    ffi::Dictionary attrs,
+    gpuStream_t stream, ffi::ScratchAllocator scratch, ffi::AnyBuffer a,
+    ffi::AnyBuffer b, ffi::Dictionary attrs,
     ffi::Result<ffi::AnyBuffer> out_a, ffi::Result<ffi::AnyBuffer> out_b,
     ffi::Result<ffi::Buffer<ffi::S32>> status)
 {
@@ -25,7 +25,6 @@ ffi::Error PotrsCuSolverMpDispatch(
   (void)scratch;
   (void)a;
   (void)b;
-  (void)tile_size;
   (void)out_a;
   (void)out_b;
   (void)status;
