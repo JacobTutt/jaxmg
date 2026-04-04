@@ -38,7 +38,7 @@ def _plan_potrs_layout(
     in_specs: Tuple[P] | List[P] | P,
 ) -> _PotrsLayoutPlan:
     """Normalize inputs and compute the current row-sharded potrs layout plan."""
-    ndev = int(os.environ["JAXMG_NUMBER_OF_DEVICES"])
+    ndev = int(os.environ.get("JAXMG_NUMBER_OF_DEVICES", jax.device_count()))
 
     if isinstance(in_specs, (list, tuple)):
         if len(in_specs) != 1:

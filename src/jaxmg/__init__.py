@@ -23,6 +23,7 @@ from ._block_cyclic_2d import (
 )
 from ._cyclic_2d import Cyclic2DPlan, cyclic_2d, plan_cyclic_2d_layout
 from ._distributed_runtime import DistributedRuntimePlan, plan_distributed_runtime
+from ._cusolvermp_plan import PotrsCuSolverMpPlan, plan_potrs_cusolvermp
 
 __all__ = [
     "potrs",
@@ -53,4 +54,6 @@ __all__ = [
     "plan_cyclic_2d_layout",
     "DistributedRuntimePlan",
     "plan_distributed_runtime",
+    "PotrsCuSolverMpPlan",
+    "plan_potrs_cusolvermp",
 ]
