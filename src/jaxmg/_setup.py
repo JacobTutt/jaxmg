@@ -69,6 +69,7 @@ def _resolve_runtime_mode():
     mode = "MPMD"
     return mode, n_devices_per_node
 
+
 if not sys.platform.startswith("linux"):
     warnings.warn(
         f"Unsupported platform {sys.platform}, only Linux is supported. Non-Linux only works for docs.",
@@ -114,16 +115,19 @@ def _load(module, libraries):
     ) from last_error
 
 
+def _load_mg_dependencies():
+    _load("cusolver", ["libcusolverMg.so.11"])
+    try:
+        _load("cu13", ["libcusolverMg.so.12"])
+    except OSError:
+        pass
+
+
 def _initialize():
     if any("gpu" == d.platform for d in jax.devices()):
         bin_dir = _resolve_cuda_bin_dir()
 
-        # Load Cusolver
-        _load("cusolver", ["libcusolverMg.so.11"])
-        try:
-            _load("cu13", ["libcusolverMg.so.12"])
-        except OSError:
-            pass
+        _load_mg_dependencies()
 
         jax.config.update("jax_enable_x64", True)
         mode, n_devices_per_node = _resolve_runtime_mode()
