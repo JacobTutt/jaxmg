@@ -47,6 +47,34 @@ Details for compiling the from source code can be found in `CONTRIBUTING.md`.
 
 > **_Note:_** `pip install jaxmg` will install a CPU-only version of JAX. Since `jaxmg` is a GPU-only package you will receive a warning to install a GPU-compatible version of jax. 
 
+### Source-build note for Isambard and similar systems
+
+On systems where the packaged wheel layout does not match the local CUDA stack,
+`jaxmg` may need to be built from source and pointed at the system `cusolverMg`
+library explicitly. The runtime loader in `src/jaxmg/_setup.py` now checks
+`JAXMG_CUSOLVERMG_LIB` and `CUSOLVERMG_LIB` before falling back to the
+packaged NVIDIA Python libraries, which is useful on Isambard-style source builds.
+
+For example:
+
+```bash
+export CUSOLVERMG_LIB=/path/to/libcusolverMg.so
+export JAXMG_CUSOLVERMG_LIB=$CUSOLVERMG_LIB
+export PYTHONPATH=/path/to/jaxmg/src:${PYTHONPATH:-}
+```
+
+The current runtime also tolerates a missing `libcusolverMg.so.12` when running
+with a CUDA 12 stack, instead of hard-failing while probing optional CUDA 13
+packaged libraries.
+
+### Future cuSOLVERMp note
+
+These installation notes are for the current `cuSolverMg` backend. If `jaxmg`
+is migrated to `cuSOLVERMp` in the future, the setup will change materially:
+expect `cuSOLVERMp`, `NCCL`, and typically `MPI` to become part of the runtime
+story, with one process per GPU and a 2D block-cyclic data layout rather than
+the current `cuSolverMg` configuration.
+
 ## Example
 
 A minimal example that runs the code is:
