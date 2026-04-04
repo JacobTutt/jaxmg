@@ -44,9 +44,9 @@ find_library(CUSOLVERMP_LIB cusolverMp
     HINTS "$ENV{CONDA_PREFIX}/lib" "${CUDAToolkit_LIBRARY_DIR}" "${CUDA_TOOLKIT_ROOT_DIR}/lib64" "/usr/local/cuda/lib64")
 find_path(CUDA_MATH_INCLUDE_DIR cublas_v2.h
     HINTS
-        "$ENV{CONDA_PREFIX}/lib/python3.11/site-packages/nvidia/cublas/include"
         "/opt/nvidia/hpc_sdk/Linux_aarch64/24.11/math_libs/${CUDAToolkit_VERSION_MAJOR}.${CUDAToolkit_VERSION_MINOR}/targets/sbsa-linux/include"
-        "/opt/nvidia/hpc_sdk/Linux_aarch64/24.11/math_libs/12.6/targets/sbsa-linux/include")
+        "/opt/nvidia/hpc_sdk/Linux_aarch64/24.11/math_libs/12.6/targets/sbsa-linux/include"
+        "$ENV{CONDA_PREFIX}/lib/python3.11/site-packages/nvidia/cublas/include")
 find_path(NCCL_INCLUDE_DIR nccl.h
     HINTS "$ENV{CONDA_PREFIX}/include" "/usr/local/include")
 find_library(NCCL_LIB nccl
