@@ -14,6 +14,21 @@ from .utils import JaxMgWarning
 _lib_dir = os.path.dirname(__file__)
 _initialized = False
 
+_SPMD_TARGETS = {
+    "cyclic_mg": ("libcyclic.so", "CyclicMgFFI"),
+    "potrs_mg": ("libpotrs.so", "PotrsMgFFI"),
+    "potri_mg": ("libpotri.so", "PotriMgFFI"),
+    "syevd_mg": ("libsyevd.so", "SyevdMgFFI"),
+    "syevd_no_V_mg": ("libsyevd_no_V.so", "SyevdMgFFI"),
+}
+
+_MPMD_TARGETS = {
+    "potrs_mg": ("libpotrs_mp.so", "PotrsMgMpFFI"),
+    "potri_mg": ("libpotri_mp.so", "PotriMgMpFFI"),
+    "syevd_mg": ("libsyevd_mp.so", "SyevdMgMpFFI"),
+    "syevd_no_V_mg": ("libsyevd_no_V_mp.so", "SyevdNoVMgMpFFI"),
+}
+
 if not sys.platform.startswith("linux"):
     warnings.warn(
         f"Unsupported platform {sys.platform}, only Linux is supported. Non-Linux only works for docs.",
@@ -108,33 +123,7 @@ def _initialize():
         # set if not set already
         os.environ.setdefault("JAXMG_NUMBER_OF_DEVICES", str(n_devices_per_node))
 
-        if mode == "SPMD":
-            library_cyclic = ctypes.cdll.LoadLibrary(os.path.join(_lib_dir, f"{bin_dir}/libcyclic.so"))
-            library_potrs = ctypes.cdll.LoadLibrary(os.path.join(_lib_dir, f"{bin_dir}/libpotrs.so"))
-            library_potri = ctypes.cdll.LoadLibrary(os.path.join(_lib_dir, f"{bin_dir}/libpotri.so"))
-            library_syevd = ctypes.cdll.LoadLibrary(os.path.join(_lib_dir, f"{bin_dir}/libsyevd.so"))
-            library_syevd_no_V = ctypes.cdll.LoadLibrary(os.path.join(_lib_dir, f"{bin_dir}/libsyevd_no_V.so"))
-
-            jax.ffi.register_ffi_target("cyclic_mg", jax.ffi.pycapsule(library_cyclic.CyclicMgFFI), platform="CUDA")
-            jax.ffi.register_ffi_target("potrs_mg", jax.ffi.pycapsule(library_potrs.PotrsMgFFI), platform="CUDA")
-            jax.ffi.register_ffi_target("potri_mg", jax.ffi.pycapsule(library_potri.PotriMgFFI), platform="CUDA")
-            jax.ffi.register_ffi_target("syevd_mg", jax.ffi.pycapsule(library_syevd.SyevdMgFFI), platform="CUDA")
-            jax.ffi.register_ffi_target(
-                "syevd_no_V_mg", jax.ffi.pycapsule(library_syevd_no_V.SyevdMgFFI), platform="CUDA"
-            )
-
-        else:
-            library_potrs_mp = ctypes.cdll.LoadLibrary(os.path.join(_lib_dir, f"{bin_dir}/libpotrs_mp.so"))
-            library_potri_mp = ctypes.cdll.LoadLibrary(os.path.join(_lib_dir, f"{bin_dir}/libpotri_mp.so"))
-            library_syevd_mp = ctypes.cdll.LoadLibrary(os.path.join(_lib_dir, f"{bin_dir}/libsyevd_mp.so"))
-            library_syevd_no_V_mp = ctypes.cdll.LoadLibrary(os.path.join(_lib_dir, f"{bin_dir}/libsyevd_no_V_mp.so"))
-
-            jax.ffi.register_ffi_target("potrs_mg", jax.ffi.pycapsule(library_potrs_mp.PotrsMgMpFFI), platform="CUDA")
-            jax.ffi.register_ffi_target("potri_mg", jax.ffi.pycapsule(library_potri_mp.PotriMgMpFFI), platform="CUDA")
-            jax.ffi.register_ffi_target("syevd_mg", jax.ffi.pycapsule(library_syevd_mp.SyevdMgMpFFI), platform="CUDA")
-            jax.ffi.register_ffi_target(
-                "syevd_no_V_mg", jax.ffi.pycapsule(library_syevd_no_V_mp.SyevdNoVMgMpFFI), platform="CUDA"
-            )
+        _register_cuda_targets(bin_dir, mode)
 
     else:
         warnings.warn(
@@ -151,3 +140,15 @@ def ensure_init_jaxmg_backend():
         return
     _initialized = True
     _initialize()
+
+
+def _register_cuda_targets(bin_dir: str, mode: str):
+    if mode == "SPMD":
+        targets = _SPMD_TARGETS
+    else:
+        targets = _MPMD_TARGETS
+
+    for target_name, (lib_name, symbol_name) in targets.items():
+        library = ctypes.cdll.LoadLibrary(os.path.join(_lib_dir, f"{bin_dir}/{lib_name}"))
+        capsule = jax.ffi.pycapsule(getattr(library, symbol_name))
+        jax.ffi.register_ffi_target(target_name, capsule, platform="CUDA")
