@@ -37,8 +37,7 @@ CPMAddPackage(
 # Import CUDAToolkit (Requires CUDA_HOME to be set)
 find_package(CUDAToolkit REQUIRED)
 find_library(CUSOLVERMG_LIB cusolverMg
-    HINTS "${CUDAToolkit_LIBRARY_DIR}" "${CUDA_TOOLKIT_ROOT_DIR}/lib64" "/usr/local/cuda/lib64"
-    REQUIRED)
+    HINTS "$ENV{CONDA_PREFIX}/lib" "${CUDAToolkit_LIBRARY_DIR}" "${CUDA_TOOLKIT_ROOT_DIR}/lib64" "/usr/local/cuda/lib64")
 find_path(CUSOLVERMP_INCLUDE_DIR cusolverMp.h
     HINTS "$ENV{CONDA_PREFIX}/include" "${CUDAToolkit_INCLUDE_DIRS}" "/usr/local/cuda/include")
 find_library(CUSOLVERMP_LIB cusolverMp
@@ -61,6 +60,11 @@ if(HAVE_CUSOLVERMP)
     message(STATUS "NCCL library: ${NCCL_LIB}")
 else()
     message(STATUS "cuSOLVERMp/NCCL not found; building mp targets in stub-only mode")
+endif()
+if(CUSOLVERMG_LIB)
+    message(STATUS "cuSolverMg library: ${CUSOLVERMG_LIB}")
+else()
+    message(STATUS "cuSolverMg library not found; Mg targets may not build in this configuration")
 endif()
 # Enable CUDA 
 enable_language(CUDA)
