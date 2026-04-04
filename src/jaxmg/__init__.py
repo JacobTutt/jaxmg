@@ -35,6 +35,10 @@ from ._cusolvermp_potrs_call import (
     CuSolverMpPotrsCallSpec,
     build_potrs_cusolvermp_call_spec,
 )
+from ._cusolvermp_potrs_context import (
+    CuSolverMpPotrsContextConfig,
+    build_potrs_cusolvermp_context_config,
+)
 from ._cusolvermp_runtime import (
     CuSolverMpRuntimePlan,
     CuSolverMpRuntimeReadiness,
@@ -81,6 +85,8 @@ __all__ = [
     "CuSolverMpArrayCallLayout",
     "CuSolverMpPotrsCallSpec",
     "build_potrs_cusolvermp_call_spec",
+    "CuSolverMpPotrsContextConfig",
+    "build_potrs_cusolvermp_context_config",
     "CuSolverMpRuntimePlan",
     "CuSolverMpRuntimeReadiness",
     "plan_cusolvermp_runtime",
