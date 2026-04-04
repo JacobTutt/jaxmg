@@ -30,6 +30,11 @@ from ._cusolvermp_backend import (
 )
 from ._cusolvermp_targets import CuSolverMpTargetSpec, cusolvermp_target_specs
 from ._cusolvermp_contract import CuSolverMpPotrsContract, plan_potrs_cusolvermp_contract
+from ._cusolvermp_potrs_call import (
+    CuSolverMpArrayCallLayout,
+    CuSolverMpPotrsCallSpec,
+    build_potrs_cusolvermp_call_spec,
+)
 from ._cusolvermp_runtime import (
     CuSolverMpRuntimePlan,
     CuSolverMpRuntimeReadiness,
@@ -73,6 +78,9 @@ __all__ = [
     "cusolvermp_target_specs",
     "CuSolverMpPotrsContract",
     "plan_potrs_cusolvermp_contract",
+    "CuSolverMpArrayCallLayout",
+    "CuSolverMpPotrsCallSpec",
+    "build_potrs_cusolvermp_call_spec",
     "CuSolverMpRuntimePlan",
     "CuSolverMpRuntimeReadiness",
     "plan_cusolvermp_runtime",
