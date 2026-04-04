@@ -16,7 +16,7 @@ from ._block_cyclic_2d import (
     numroc,
     local_block_cyclic_shape,
 )
-from ._cyclic_2d import Cyclic2DPlan, plan_cyclic_2d_layout
+from ._cyclic_2d import Cyclic2DPlan, cyclic_2d, plan_cyclic_2d_layout
 
 __all__ = [
     "potrs",
@@ -38,5 +38,6 @@ __all__ = [
     "numroc",
     "local_block_cyclic_shape",
     "Cyclic2DPlan",
+    "cyclic_2d",
     "plan_cyclic_2d_layout",
 ]

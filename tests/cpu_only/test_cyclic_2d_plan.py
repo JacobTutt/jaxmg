@@ -5,6 +5,7 @@ import pytest
 from jax.sharding import PartitionSpec as P
 from jaxmg import (
     choose_process_grid,
+    cyclic_2d,
     local_block_cyclic_shape,
     normalize_process_grid,
     numroc,
@@ -44,6 +45,13 @@ def test_plan_cyclic_2d_layout_uses_row_sharded_input_contract():
     assert plan.block_shape == (2, 2)
     assert plan.process_grid == (1, 1)
     assert plan.local_shapes == ((4, 4),)
+
+
+def test_cyclic_2d_wrapper_matches_planning_helper():
+    mesh = jax.make_mesh((jax.local_device_count(),), ("x",))
+    a = jnp.eye(6)
+    plan = cyclic_2d(a, 3, mesh=mesh, in_specs=(P("x", None),))
+    assert plan == plan_cyclic_2d_layout(a, 3, mesh=mesh, in_specs=(P("x", None),))
 
 
 def test_plan_cyclic_2d_layout_rejects_non_row_sharded_specs():

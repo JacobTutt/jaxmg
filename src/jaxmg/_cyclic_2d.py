@@ -15,6 +15,29 @@ class Cyclic2DPlan:
     local_shapes: Tuple[Tuple[int, int], ...]
 
 
+def cyclic_2d(
+    a: Array,
+    T_A: int,
+    mesh: Mesh,
+    in_specs: Tuple[P] | List[P],
+    pad: bool = True,
+    process_grid: Tuple[int, int] | None = None,
+) -> Cyclic2DPlan:
+    """Planning-only preview of the future 2D block-cyclic layout helper.
+
+    This intentionally does not invoke native code yet. It exists to establish
+    the public migration seam while the live Mg solver path remains unchanged.
+    """
+    return plan_cyclic_2d_layout(
+        a,
+        T_A,
+        mesh=mesh,
+        in_specs=in_specs,
+        pad=pad,
+        process_grid=process_grid,
+    )
+
+
 def plan_cyclic_2d_layout(
     a: Array,
     T_A: int,
