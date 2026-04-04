@@ -31,6 +31,10 @@ _CUDA_TARGETS = {
             "syevd_no_V_mg": ("libsyevd_no_V_mp.so", "SyevdNoVMgMpFFI"),
         },
     },
+    "mp": {
+        "SPMD": {},
+        "MPMD": {},
+    },
 }
 
 
@@ -50,12 +54,13 @@ class _BackendFamilyDefinition:
 
 def _resolve_backend_family_definition():
     backend_family = os.environ.get("JAXMG_BACKEND_FAMILY", "mg").strip().lower()
+    supported_families = ", ".join(sorted(_CUDA_TARGETS))
     try:
         cuda_targets = _CUDA_TARGETS[backend_family]
     except KeyError as exc:
         raise ValueError(
             f"Unsupported JAXMg backend family: {backend_family}. "
-            "Current supported values: mg"
+            f"Current supported values: {supported_families}"
         ) from exc
     return _BackendFamilyDefinition(family=backend_family, cuda_targets=cuda_targets)
 
@@ -153,6 +158,11 @@ def _load_backend_dependencies(backend_family: str):
         except OSError:
             pass
         return
+
+    if backend_family == "mp":
+        raise NotImplementedError(
+            "JAXMG_BACKEND_FAMILY=mp is recognized but not implemented yet."
+        )
 
     raise ValueError(f"Unsupported JAXMg backend family: {backend_family}")
 
