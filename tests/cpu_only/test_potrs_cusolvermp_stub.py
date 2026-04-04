@@ -25,5 +25,5 @@ def test_potrs_cusolvermp_raises_explicit_stub_error():
     a = jnp.eye(6)
     b = jnp.ones((6,))
 
-    with pytest.raises(NotImplementedError, match="potrs_cusolvermp is not linked yet"):
+    with pytest.raises(NotImplementedError, match="requires a GPU runtime"):
         potrs_cusolvermp(a, b, 4, mesh=mesh, in_specs=(P("x", None),))

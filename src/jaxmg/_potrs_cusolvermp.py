@@ -1,3 +1,5 @@
+import jax
+import jax.numpy as jnp
 from dataclasses import dataclass
 from typing import List, Tuple
 
@@ -63,9 +65,10 @@ def potrs_cusolvermp(
 ):
     """Stub entry seam for the future cuSOLVERMp potrs path.
 
-    This intentionally does not execute a native FFI target yet. It exists so
-    the Python-side path can build the eventual call request end-to-end and
-    then fail in a single explicit place until the native backend is linked.
+    This first attempts to build the full future request path. When the
+    experimental `mp` stub backend is available on a GPU runtime, it calls the
+    registered native stub target. Otherwise it fails in Python with an
+    explicit message.
     """
     ensure_init_jaxmg_backend()
     request = build_potrs_cusolvermp_stub_request(
@@ -77,9 +80,30 @@ def potrs_cusolvermp(
         pad=pad,
         process_grid=process_grid,
     )
-    raise NotImplementedError(
-        "potrs_cusolvermp is not linked yet. "
-        f"Prepared target {request.context.ffi_target_name!r} with "
-        f"launch_ready={request.context.launch_ready}, "
-        f"contract_supported={request.context.contract_supported}."
+    if not request.context.contract_supported:
+        raise ValueError(request.context.contract_failure_reason)
+    if not request.context.launch_ready:
+        raise NotImplementedError(
+            "potrs_cusolvermp requires a one-process-per-GPU launch. "
+            f"Current issues: {request.context.launch_issues}"
+        )
+    if not any(device.platform == "gpu" for device in jax.devices()):
+        raise NotImplementedError(
+            "potrs_cusolvermp native stub requires a GPU runtime. "
+            f"Prepared target {request.context.ffi_target_name!r}."
+        )
+
+    normalized_b = b if b.ndim == 2 else jnp.expand_dims(b, axis=1)
+    out_type = (
+        jax.ShapeDtypeStruct(a.shape, a.dtype),
+        jax.ShapeDtypeStruct(normalized_b.shape, normalized_b.dtype),
+        jax.ShapeDtypeStruct((1,), jnp.int32),
     )
+    ffi_fn = jax.ffi.ffi_call(
+        request.context.ffi_target_name,
+        out_type,
+        input_layouts=((0, 1), (1, 0)),
+        output_layouts=((0, 1), (1, 0), (0,)),
+        input_output_aliases={0: 0, 1: 1},
+    )
+    return ffi_fn(a, normalized_b, T_A=T_A)
