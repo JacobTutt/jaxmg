@@ -50,9 +50,13 @@ set(HAVE_CUSOLVERMP OFF)
 if(CUSOLVERMP_INCLUDE_DIR AND CUSOLVERMP_LIB AND NCCL_INCLUDE_DIR AND NCCL_LIB)
     set(HAVE_CUSOLVERMP ON)
 endif()
-find_package(CUDNN REQUIRED)
+find_package(CUDNN)
 message(STATUS "CUDA include directory: $ENV{CUDA_ROOT}")
-message(STATUS "CUDNN include directory: $ENV{CUDNN_ROOT}")
+if(CUDNN_FOUND)
+    message(STATUS "CUDNN include directory: $ENV{CUDNN_ROOT}")
+else()
+    message(STATUS "CUDNN not found; Mg targets may not build in this configuration")
+endif()
 if(HAVE_CUSOLVERMP)
     message(STATUS "cuSOLVERMp include directory: ${CUSOLVERMP_INCLUDE_DIR}")
     message(STATUS "cuSOLVERMp library: ${CUSOLVERMP_LIB}")
@@ -117,13 +121,15 @@ if(NOT ln_result EQUAL 0)
     message(FATAL_ERROR "Failed to create symlink for CUDA: $ENV{CUDA_ROOT}")
 endif()
 
-message(STATUS "Resolved cuDNN include dir: ${CUDNN_INCLUDE_PATH}")
-execute_process(
-    COMMAND ln -sfn ${CUDNN_INCLUDE_PATH} ${CMAKE_SOURCE_DIR}/third_party/gpus/cudnn
-    RESULT_VARIABLE ln_result
-)
-if(NOT ln_result EQUAL 0)
-    message(FATAL_ERROR "Failed to create symlink for CUDNN include: ${CUDNN_INCLUDE_PATH}")
+if(CUDNN_FOUND)
+    message(STATUS "Resolved cuDNN include dir: ${CUDNN_INCLUDE_PATH}")
+    execute_process(
+        COMMAND ln -sfn ${CUDNN_INCLUDE_PATH} ${CMAKE_SOURCE_DIR}/third_party/gpus/cudnn
+        RESULT_VARIABLE ln_result
+    )
+    if(NOT ln_result EQUAL 0)
+        message(FATAL_ERROR "Failed to create symlink for CUDNN include: ${CUDNN_INCLUDE_PATH}")
+    endif()
 endif()
 file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/xla/ffi)
 execute_process(
