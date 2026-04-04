@@ -38,8 +38,6 @@ struct CuSolverMpPotrsStubAttrs
 } // namespace JAX_GPU_NAMESPACE
 } // namespace jax
 
-namespace xla::ffi
-{
 XLA_FFI_REGISTER_STRUCT_ATTR_DECODING(
     ::jax::JAX_GPU_NAMESPACE::CuSolverMpPotrsStubAttrs,
     StructMember<int64_t>("T_A"),
@@ -55,7 +53,6 @@ XLA_FFI_REGISTER_STRUCT_ATTR_DECODING(
     StructMember<int64_t>("matrix_block_cols"),
     StructMember<int64_t>("rhs_block_rows"),
     StructMember<int64_t>("rhs_block_cols"));
-} // namespace xla::ffi
 
 namespace jax
 {
