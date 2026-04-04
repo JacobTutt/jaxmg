@@ -5,6 +5,7 @@ import warnings
 import sys
 import os
 import re
+from dataclasses import dataclass
 
 import jax
 import jax.extend
@@ -31,6 +32,14 @@ _CUDA_TARGETS = {
         },
     },
 }
+
+
+@dataclass(frozen=True)
+class _CudaBackendConfig:
+    backend_family: str
+    bin_dir: str
+    mode: str
+    n_devices_per_node: int
 
 
 def _resolve_backend_family():
@@ -141,18 +150,28 @@ def _load_backend_dependencies(backend_family: str):
 
 
 def _initialize_cuda_backend():
-    backend_family = _resolve_backend_family()
-    bin_dir = _resolve_cuda_bin_dir()
+    config = _resolve_cuda_backend_config()
 
-    _load_backend_dependencies(backend_family)
+    _load_backend_dependencies(config.backend_family)
 
     jax.config.update("jax_enable_x64", True)
-    mode, n_devices_per_node = _resolve_runtime_mode()
 
     # set if not set already
-    os.environ.setdefault("JAXMG_NUMBER_OF_DEVICES", str(n_devices_per_node))
+    os.environ.setdefault("JAXMG_NUMBER_OF_DEVICES", str(config.n_devices_per_node))
 
-    _register_cuda_targets(bin_dir, backend_family, mode)
+    _register_cuda_targets(config.bin_dir, config.backend_family, config.mode)
+
+
+def _resolve_cuda_backend_config():
+    backend_family = _resolve_backend_family()
+    bin_dir = _resolve_cuda_bin_dir()
+    mode, n_devices_per_node = _resolve_runtime_mode()
+    return _CudaBackendConfig(
+        backend_family=backend_family,
+        bin_dir=bin_dir,
+        mode=mode,
+        n_devices_per_node=n_devices_per_node,
+    )
 
 
 def _initialize():
