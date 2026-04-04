@@ -24,7 +24,8 @@ def test_resolve_backend_family_definition_recognizes_mp(monkeypatch):
     definition = _resolve_backend_family_definition()
 
     assert definition.family == "mp"
-    assert definition.cuda_targets == {"SPMD": {}, "MPMD": {}}
+    assert "potrs_cusolvermp" in definition.cuda_targets["SPMD"]
+    assert "syevd_cusolvermp" in definition.cuda_targets["MPMD"]
 
 
 def test_resolve_backend_family_definition_rejects_unknown(monkeypatch):
@@ -42,6 +43,18 @@ def test_resolve_cuda_targets_uses_backend_definition(monkeypatch):
 
     assert "potrs_mg" in targets
     assert targets["potrs_mg"] == ("libpotrs.so", "PotrsMgFFI")
+
+
+def test_resolve_cuda_targets_exposes_mp_placeholder_targets(monkeypatch):
+    monkeypatch.setenv("JAXMG_BACKEND_FAMILY", "mp")
+
+    definition = _resolve_backend_family_definition()
+    targets = _resolve_cuda_targets(definition, "SPMD")
+
+    assert targets["potrs_cusolvermp"] == (
+        "libpotrs_cusolvermp.so",
+        "PotrsCuSolverMpFFI",
+    )
 
 
 def test_resolve_cuda_targets_rejects_missing_mode(monkeypatch):

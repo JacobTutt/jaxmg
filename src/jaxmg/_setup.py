@@ -32,8 +32,26 @@ _CUDA_TARGETS = {
         },
     },
     "mp": {
-        "SPMD": {},
-        "MPMD": {},
+        "SPMD": {
+            "potrs_cusolvermp": (
+                "libpotrs_cusolvermp.so",
+                "PotrsCuSolverMpFFI",
+            ),
+            "syevd_cusolvermp": (
+                "libsyevd_cusolvermp.so",
+                "SyevdCuSolverMpFFI",
+            ),
+        },
+        "MPMD": {
+            "potrs_cusolvermp": (
+                "libpotrs_cusolvermp.so",
+                "PotrsCuSolverMpFFI",
+            ),
+            "syevd_cusolvermp": (
+                "libsyevd_cusolvermp.so",
+                "SyevdCuSolverMpFFI",
+            ),
+        },
     },
 }
 
