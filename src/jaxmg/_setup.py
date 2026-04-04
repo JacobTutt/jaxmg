@@ -14,19 +14,22 @@ from .utils import JaxMgWarning
 _lib_dir = os.path.dirname(__file__)
 _initialized = False
 
-_SPMD_TARGETS = {
-    "cyclic_mg": ("libcyclic.so", "CyclicMgFFI"),
-    "potrs_mg": ("libpotrs.so", "PotrsMgFFI"),
-    "potri_mg": ("libpotri.so", "PotriMgFFI"),
-    "syevd_mg": ("libsyevd.so", "SyevdMgFFI"),
-    "syevd_no_V_mg": ("libsyevd_no_V.so", "SyevdMgFFI"),
-}
-
-_MPMD_TARGETS = {
-    "potrs_mg": ("libpotrs_mp.so", "PotrsMgMpFFI"),
-    "potri_mg": ("libpotri_mp.so", "PotriMgMpFFI"),
-    "syevd_mg": ("libsyevd_mp.so", "SyevdMgMpFFI"),
-    "syevd_no_V_mg": ("libsyevd_no_V_mp.so", "SyevdNoVMgMpFFI"),
+_CUDA_TARGETS = {
+    "mg": {
+        "SPMD": {
+            "cyclic_mg": ("libcyclic.so", "CyclicMgFFI"),
+            "potrs_mg": ("libpotrs.so", "PotrsMgFFI"),
+            "potri_mg": ("libpotri.so", "PotriMgFFI"),
+            "syevd_mg": ("libsyevd.so", "SyevdMgFFI"),
+            "syevd_no_V_mg": ("libsyevd_no_V.so", "SyevdMgFFI"),
+        },
+        "MPMD": {
+            "potrs_mg": ("libpotrs_mp.so", "PotrsMgMpFFI"),
+            "potri_mg": ("libpotri_mp.so", "PotriMgMpFFI"),
+            "syevd_mg": ("libsyevd_mp.so", "SyevdMgMpFFI"),
+            "syevd_no_V_mg": ("libsyevd_no_V_mp.so", "SyevdNoVMgMpFFI"),
+        },
+    },
 }
 
 
@@ -144,7 +147,7 @@ def _initialize():
         # set if not set already
         os.environ.setdefault("JAXMG_NUMBER_OF_DEVICES", str(n_devices_per_node))
 
-        _register_cuda_targets(bin_dir, mode)
+        _register_cuda_targets(bin_dir, backend_family, mode)
 
     else:
         warnings.warn(
@@ -163,12 +166,17 @@ def ensure_init_jaxmg_backend():
     _initialize()
 
 
-def _register_cuda_targets(bin_dir: str, mode: str):
-    if mode == "SPMD":
-        targets = _SPMD_TARGETS
-    else:
-        targets = _MPMD_TARGETS
+def _resolve_cuda_targets(backend_family: str, mode: str):
+    try:
+        return _CUDA_TARGETS[backend_family][mode]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unsupported CUDA target configuration for backend_family={backend_family!r}, mode={mode!r}"
+        ) from exc
 
+
+def _register_cuda_targets(bin_dir: str, backend_family: str, mode: str):
+    targets = _resolve_cuda_targets(backend_family, mode)
     for target_name, (lib_name, symbol_name) in targets.items():
         library = ctypes.cdll.LoadLibrary(os.path.join(_lib_dir, f"{bin_dir}/{lib_name}"))
         capsule = jax.ffi.pycapsule(getattr(library, symbol_name))
