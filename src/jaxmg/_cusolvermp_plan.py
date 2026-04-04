@@ -4,6 +4,10 @@ from typing import List, Tuple
 from jax import Array
 from jax.sharding import Mesh, PartitionSpec as P
 
+from ._cusolvermp_contract import (
+    CuSolverMpPotrsContract,
+    plan_potrs_cusolvermp_contract,
+)
 from ._cusolvermp_runtime import CuSolverMpRuntimePlan, plan_cusolvermp_runtime
 from ._potrs import _PotrsMigrationPreview, _plan_potrs_migration_preview
 
@@ -11,6 +15,7 @@ from ._potrs import _PotrsMigrationPreview, _plan_potrs_migration_preview
 @dataclass(frozen=True)
 class PotrsCuSolverMpPlan:
     runtime: CuSolverMpRuntimePlan
+    contract: CuSolverMpPotrsContract
     potrs: _PotrsMigrationPreview
 
 
@@ -25,6 +30,7 @@ def plan_potrs_cusolvermp(
 ) -> PotrsCuSolverMpPlan:
     """Build the solver-level planning object for a future cuSOLVERMp potrs path."""
     runtime = plan_cusolvermp_runtime(mesh, process_grid=process_grid)
+    contract = plan_potrs_cusolvermp_contract(b)
     potrs = _plan_potrs_migration_preview(
         a,
         b,
@@ -34,4 +40,4 @@ def plan_potrs_cusolvermp(
         pad=pad,
         process_grid=runtime.runtime.process_grid,
     )
-    return PotrsCuSolverMpPlan(runtime=runtime, potrs=potrs)
+    return PotrsCuSolverMpPlan(runtime=runtime, contract=contract, potrs=potrs)
