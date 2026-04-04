@@ -23,23 +23,40 @@ if not sys.platform.startswith("linux"):
 
 
 def _load(module, libraries):
+    env_candidates = []
+    if module == "cusolver":
+        env_candidates.extend(
+            [
+                os.environ.get("JAXMG_CUSOLVERMG_LIB"),
+                os.environ.get("CUSOLVERMG_LIB"),
+            ]
+        )
+
     try:
         m = importlib.import_module(f"nvidia.{module}")
     except ImportError:
         m = None
 
+    last_error = None
     for lib in libraries:
+        candidates = [candidate for candidate in env_candidates if candidate]
+        candidates.append(lib)
+
         if m is not None:
-            path = pathlib.Path(m.__path__[0]) / "lib" / lib
+            candidates.append(str(pathlib.Path(m.__path__[0]) / "lib" / lib))
+
+        for candidate in candidates:
             try:
-                ctypes.cdll.LoadLibrary(path)
-                continue
+                ctypes.cdll.LoadLibrary(candidate)
+                return
             except OSError as e:
-                raise OSError(
-                    f"Unable to load CUDA library {lib}, make sure you have a version of JAX that is "
-                    "GPU compatible: jax[cuda12], jax[cuda12-local] (>=0.6.2) or jax[cuda13], jax[cuda13-local] (>=0.7.2)."
-                    "This is guaranteed if you install JAXMg as: jaxmg[cuda12], jaxmg[cuda12-local], jaxmg[cuda13] or jaxmg[cuda13-local]"
-                ) from e
+                last_error = e
+
+    raise OSError(
+        f"Unable to load CUDA library {libraries}, make sure you have a version of JAX that is "
+        "GPU compatible: jax[cuda12], jax[cuda12-local] (>=0.6.2) or jax[cuda13], jax[cuda13-local] (>=0.7.2)."
+        "This is guaranteed if you install JAXMg as: jaxmg[cuda12], jaxmg[cuda12-local], jaxmg[cuda13] or jaxmg[cuda13-local]"
+    ) from last_error
 
 
 def _initialize():
@@ -55,7 +72,10 @@ def _initialize():
 
         # Load Cusolver
         _load("cusolver", ["libcusolverMg.so.11"])
-        _load("cu13", ["libcusolverMg.so.12"])
+        try:
+            _load("cu13", ["libcusolverMg.so.12"])
+        except OSError:
+            pass
 
         jax.config.update("jax_enable_x64", True)
 
