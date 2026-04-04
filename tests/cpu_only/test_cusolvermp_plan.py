@@ -16,6 +16,7 @@ def test_plan_potrs_cusolvermp_combines_runtime_and_potrs_preview():
     assert plan.runtime.requires_mpi is True
     assert plan.runtime.requires_nccl is True
     assert plan.runtime.max_nrhs == 1
+    assert plan.runtime.readiness.expected_process_count == mesh.devices.size
     assert plan.contract.supported is True
     assert plan.contract.input_nrhs == 1
     assert plan.runtime.runtime.global_device_count == mesh.devices.size
