@@ -109,6 +109,35 @@ ffi::Error PotrsCuSolverMpDispatch(
           ? std::string(attrs.context_json)
           : absl::StrFormat("%s...", attrs.context_json.substr(0, kPreviewChars));
 
+#if defined(JAXMG_HAVE_CUSOLVERMP) && defined(JAXMG_HAVE_NCCL)
+  std::string probe_error;
+  auto probe = jaxmg::ProbeCuSolverMpRuntime(spec, &probe_error);
+  if (!probe.has_value())
+  {
+    return ffi::Error::InvalidArgument(
+        absl::StrFormat(
+            "potrs_cusolvermp reached native code but the real cuSOLVERMp "
+            "runtime probe failed: %s",
+            probe_error));
+  }
+
+  return ffi::Error::InvalidArgument(
+      absl::StrFormat(
+          "potrs_cusolvermp reached native code and completed a real "
+          "cuSOLVERMp runtime probe with device=%d, nccl_version=%d, "
+          "cusolvermp_version=%d, T_A=%d, rank=%d/%d, process_grid=(%d,%d), "
+          "matrix_block=(%d,%d), rhs_block=(%d,%d), context_json=%s, but the "
+          "solver execution path is not implemented yet.",
+          probe->cuda_device_id, probe->nccl_version, probe->cusolvermp_version,
+          static_cast<int>(attrs.tile_size), static_cast<int>(attrs.process_rank),
+          static_cast<int>(attrs.process_count),
+          static_cast<int>(attrs.process_grid_nprow),
+          static_cast<int>(attrs.process_grid_npcol),
+          static_cast<int>(attrs.matrix_block_rows),
+          static_cast<int>(attrs.matrix_block_cols),
+          static_cast<int>(attrs.rhs_block_rows),
+          static_cast<int>(attrs.rhs_block_cols), preview));
+#else
   return ffi::Error::InvalidArgument(
       absl::StrFormat(
           "potrs_cusolvermp stub reached native code with T_A=%d, "
@@ -124,6 +153,7 @@ ffi::Error PotrsCuSolverMpDispatch(
           static_cast<int>(attrs.matrix_block_cols),
           static_cast<int>(attrs.rhs_block_rows),
           static_cast<int>(attrs.rhs_block_cols), preview));
+#endif
 }
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(PotrsCuSolverMpFFI, PotrsCuSolverMpDispatch,

@@ -1,6 +1,7 @@
 #ifndef JAXMG_CUSOLVERMP_CONTEXT_H_
 #define JAXMG_CUSOLVERMP_CONTEXT_H_
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -37,6 +38,13 @@ struct CuSolverMpContextPlan
   std::vector<std::string> unsupported_operations;
 };
 
+struct CuSolverMpRuntimeProbeResult
+{
+  int cuda_device_id;
+  int nccl_version;
+  int cusolvermp_version;
+};
+
 CuSolverMpContextPlan BuildCuSolverMpContextPlan();
 
 bool CuSolverMpContextSpecIsLaunchReady(const CuSolverMpContextSpec &spec);
@@ -47,6 +55,9 @@ std::vector<std::string> CuSolverMpContextLaunchIssues(
 std::vector<std::string> CuSolverMpPotrsStubContractIssues(
     const CuSolverMpContextSpec &spec, int tile_size, int matrix_block_rows,
     int matrix_block_cols, int rhs_block_rows, int rhs_block_cols);
+
+std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
+    const CuSolverMpContextSpec &spec, std::string *error_message);
 
 } // namespace jaxmg
 
