@@ -1,4 +1,5 @@
 import os
+from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 from jax import Array
@@ -9,6 +10,66 @@ from functools import partial
 
 from ._cyclic_1d import calculate_padding, pad_rows
 from ._setup import ensure_init_jaxmg_backend
+
+
+@dataclass(frozen=True)
+class _PotrsLayoutPlan:
+    a: Array
+    b: Array
+    axis_name: str
+    ndev: int
+    N_rows: int
+    N: int
+    shard_size: int
+    padding: int
+
+
+def _plan_potrs_layout(
+    a: Array,
+    b: Array,
+    T_A: int,
+    in_specs: Tuple[P] | List[P] | P,
+) -> _PotrsLayoutPlan:
+    """Normalize inputs and compute the current row-sharded potrs layout plan."""
+    ndev = int(os.environ["JAXMG_NUMBER_OF_DEVICES"])
+
+    if isinstance(in_specs, (list, tuple)):
+        if len(in_specs) != 1:
+            raise ValueError(
+                "in_specs must be a single PartitionSpec or a 1-element list/tuple."
+            )
+        in_specs = in_specs[0]
+    if not isinstance(in_specs, P):
+        raise TypeError(
+            "in_specs must be a PartitionSpec or a 1-element list/tuple containing one."
+        )
+    if (in_specs._partitions[0] == None) or (in_specs._partitions[1] != None):
+        raise ValueError(
+            "A must be sharded along the columns with PartitionSpec P(None, str)."
+        )
+
+    assert a.shape[1] == b.shape[0], "A and b must have the same number of columns."
+    assert a.ndim == 2, "a must be a 2D array."
+    assert b.ndim <= 2, "b must be a 1D or 2D array."
+
+    if b.ndim == 1:
+        b = jnp.expand_dims(b, axis=1)
+
+    N_rows, N = a.shape
+    axis_name = in_specs._partitions[0]
+    shard_size = N_rows // ndev
+    padding = calculate_padding(shard_size, T_A)
+
+    return _PotrsLayoutPlan(
+        a=a,
+        b=b,
+        axis_name=axis_name,
+        ndev=ndev,
+        N_rows=N_rows,
+        N=N,
+        shard_size=shard_size,
+        padding=padding,
+    )
 
 
 def potrs(
@@ -78,41 +139,20 @@ def potrs(
           ``status`` will be non-zero.
     """
     ensure_init_jaxmg_backend()
-
-    ndev = int(os.environ["JAXMG_NUMBER_OF_DEVICES"])
-
-    if isinstance(in_specs, (list, tuple)):
-        if len(in_specs) != 1:
-            raise ValueError(
-                "in_specs must be a single PartitionSpec or a 1-element list/tuple."
-            )
-        in_specs = in_specs[0]
-    if not isinstance(in_specs, P):
-        raise TypeError(
-            "in_specs must be a PartitionSpec or a 1-element list/tuple containing one."
-        )
-    if (in_specs._partitions[0] == None) or (in_specs._partitions[1] != None):
-        raise ValueError(
-            "A must be sharded along the columns with PartitionSpec P(None, str)."
-        )
-
-    assert a.shape[1] == b.shape[0], "A and b must have the same number of columns."
-    assert a.ndim == 2, "a must be a 2D array."
-    assert b.ndim <= 2, "b must be a 1D or 2D array."
-    # ensure b is always 2D
-    if b.ndim == 1:
-        b = jnp.expand_dims(b, axis=1)
-
-    N_rows, N = a.shape
-    axis_name = in_specs._partitions[0]
-
-    shard_size = N_rows // ndev
+    plan = _plan_potrs_layout(a, b, T_A, in_specs)
+    a = plan.a
+    b = plan.b
+    axis_name = plan.axis_name
+    ndev = plan.ndev
+    N_rows = plan.N_rows
+    N = plan.N
+    shard_size = plan.shard_size
 
     # Keep b in column-major layout
     input_layouts = ((0, 1), (1, 0))
     output_layouts = ((0, 1), (1, 0), (0,))
 
-    padding = calculate_padding(shard_size, T_A)
+    padding = plan.padding
 
     if not pad or padding == 0 or T_A >= N // ndev:
         if T_A < N // ndev:
