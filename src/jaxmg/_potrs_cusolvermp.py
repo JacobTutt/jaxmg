@@ -106,4 +106,9 @@ def potrs_cusolvermp(
         output_layouts=((0, 1), (1, 0), (0,)),
         input_output_aliases={0: 0, 1: 1},
     )
-    return ffi_fn(a, normalized_b, T_A=T_A)
+    return ffi_fn(
+        a,
+        normalized_b,
+        T_A=T_A,
+        context_json=request.attributes.payload_json,
+    )

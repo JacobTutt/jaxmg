@@ -17,8 +17,9 @@ namespace ffi = ::xla::ffi;
 
 ffi::Error PotrsCuSolverMpDispatch(
     gpuStream_t stream, ffi::ScratchAllocator scratch, ffi::AnyBuffer a,
-    ffi::AnyBuffer b, int64_t tile_size, ffi::Result<ffi::AnyBuffer> out_a,
-    ffi::Result<ffi::AnyBuffer> out_b, ffi::Result<ffi::Buffer<ffi::S32>> status)
+    ffi::AnyBuffer b, int64_t tile_size, std::string_view context_json,
+    ffi::Result<ffi::AnyBuffer> out_a, ffi::Result<ffi::AnyBuffer> out_b,
+    ffi::Result<ffi::Buffer<ffi::S32>> status)
 {
   (void)stream;
   (void)scratch;
@@ -29,8 +30,18 @@ ffi::Error PotrsCuSolverMpDispatch(
   (void)out_b;
   (void)status;
 
+  constexpr size_t kPreviewChars = 160;
+  std::string preview =
+      context_json.size() <= kPreviewChars
+          ? std::string(context_json)
+          : absl::StrFormat("%s...", context_json.substr(0, kPreviewChars));
+
   return ffi::Error::InvalidArgument(
-      "potrs_cusolvermp stub reached native code, but the real cuSOLVERMp implementation is not linked yet.");
+      absl::StrFormat(
+          "potrs_cusolvermp stub reached native code with T_A=%d and "
+          "context_json=%s, but the real cuSOLVERMp implementation is not "
+          "linked yet.",
+          static_cast<int>(tile_size), preview));
 }
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(PotrsCuSolverMpFFI, PotrsCuSolverMpDispatch,
@@ -40,6 +51,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(PotrsCuSolverMpFFI, PotrsCuSolverMpDispatch,
                                   .Arg<ffi::AnyBuffer>()        // A
                                   .Arg<ffi::AnyBuffer>()        // b
                                   .Attr<int64_t>("T_A")         // tile size
+                                  .Attr<std::string_view>("context_json")
                                   .Ret<ffi::AnyBuffer>()        // A_out
                                   .Ret<ffi::AnyBuffer>()        // b_out
                                   .Ret<ffi::Buffer<ffi::S32>>() // status
