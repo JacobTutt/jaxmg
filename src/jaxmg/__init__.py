@@ -39,6 +39,11 @@ from ._cusolvermp_potrs_context import (
     CuSolverMpPotrsContextConfig,
     build_potrs_cusolvermp_context_config,
 )
+from ._cusolvermp_potrs_attributes import (
+    CuSolverMpPotrsAttributes,
+    build_potrs_cusolvermp_attributes,
+    encode_potrs_cusolvermp_attributes,
+)
 from ._cusolvermp_runtime import (
     CuSolverMpRuntimePlan,
     CuSolverMpRuntimeReadiness,
@@ -87,6 +92,9 @@ __all__ = [
     "build_potrs_cusolvermp_call_spec",
     "CuSolverMpPotrsContextConfig",
     "build_potrs_cusolvermp_context_config",
+    "CuSolverMpPotrsAttributes",
+    "build_potrs_cusolvermp_attributes",
+    "encode_potrs_cusolvermp_attributes",
     "CuSolverMpRuntimePlan",
     "CuSolverMpRuntimeReadiness",
     "plan_cusolvermp_runtime",
