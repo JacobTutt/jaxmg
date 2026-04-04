@@ -69,6 +69,7 @@ if(CUSOLVERMG_LIB)
     message(STATUS "cuSolverMg library: ${CUSOLVERMG_LIB}")
 else()
     message(STATUS "cuSolverMg library not found; Mg targets may not build in this configuration")
+    set(CUSOLVERMG_LIB "")
 endif()
 # Enable CUDA 
 enable_language(CUDA)
