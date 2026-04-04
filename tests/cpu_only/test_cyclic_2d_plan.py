@@ -6,10 +6,12 @@ from jax.sharding import PartitionSpec as P
 from jaxmg import (
     choose_process_grid,
     cyclic_2d,
+    linear_rank_to_process_coords,
     local_block_cyclic_shape,
     normalize_process_grid,
     numroc,
     plan_cyclic_2d_layout,
+    process_grid_rank_order,
 )
 
 
@@ -37,6 +39,12 @@ def test_local_block_cyclic_shape_matches_even_2x2_case():
     assert local_block_cyclic_shape((8, 8), (2, 2), (2, 2), (1, 1)) == (4, 4)
 
 
+def test_rank_order_is_row_major():
+    assert linear_rank_to_process_coords(0, (2, 3)) == (0, 0)
+    assert linear_rank_to_process_coords(4, (2, 3)) == (1, 1)
+    assert process_grid_rank_order((2, 2)) == ((0, 0), (0, 1), (1, 0), (1, 1))
+
+
 def test_plan_cyclic_2d_layout_uses_row_sharded_input_contract():
     mesh = jax.make_mesh((jax.local_device_count(),), ("x",))
     a = jnp.eye(4)
@@ -44,6 +52,7 @@ def test_plan_cyclic_2d_layout_uses_row_sharded_input_contract():
     assert plan.global_shape == (4, 4)
     assert plan.block_shape == (2, 2)
     assert plan.process_grid == (1, 1)
+    assert plan.rank_order == ((0, 0),)
     assert plan.local_shapes == ((4, 4),)
 
 

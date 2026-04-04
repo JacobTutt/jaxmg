@@ -15,6 +15,8 @@ from ._block_cyclic_2d import (
     normalize_process_grid,
     numroc,
     local_block_cyclic_shape,
+    linear_rank_to_process_coords,
+    process_grid_rank_order,
 )
 from ._cyclic_2d import Cyclic2DPlan, cyclic_2d, plan_cyclic_2d_layout
 
@@ -37,6 +39,8 @@ __all__ = [
     "normalize_process_grid",
     "numroc",
     "local_block_cyclic_shape",
+    "linear_rank_to_process_coords",
+    "process_grid_rank_order",
     "Cyclic2DPlan",
     "cyclic_2d",
     "plan_cyclic_2d_layout",

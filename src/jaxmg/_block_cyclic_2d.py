@@ -83,3 +83,23 @@ def local_block_cyclic_shape(
     local_rows = numroc(nrows, mb, prow, nprow, src_proc=src_prow)
     local_cols = numroc(ncols, nb, pcol, npcol, src_proc=src_pcol)
     return (local_rows, local_cols)
+
+
+def linear_rank_to_process_coords(
+    rank: int, process_grid: Tuple[int, int]
+) -> Tuple[int, int]:
+    """Map a linear rank index into row-major ``(prow, pcol)`` coordinates."""
+    nprow, npcol = process_grid
+    num_devices = nprow * npcol
+    if not 0 <= rank < num_devices:
+        raise ValueError("rank must satisfy 0 <= rank < nprow * npcol.")
+    return divmod(rank, npcol)
+
+
+def process_grid_rank_order(process_grid: Tuple[int, int]) -> Tuple[Tuple[int, int], ...]:
+    """Return the row-major ``(prow, pcol)`` ordering for a process grid."""
+    nprow, npcol = process_grid
+    return tuple(
+        linear_rank_to_process_coords(rank, process_grid)
+        for rank in range(nprow * npcol)
+    )

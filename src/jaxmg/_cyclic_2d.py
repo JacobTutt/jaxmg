@@ -4,7 +4,11 @@ from typing import List, Tuple
 from jax import Array
 from jax.sharding import Mesh, PartitionSpec as P
 
-from ._block_cyclic_2d import local_block_cyclic_shape, normalize_process_grid
+from ._block_cyclic_2d import (
+    local_block_cyclic_shape,
+    normalize_process_grid,
+    process_grid_rank_order,
+)
 
 
 @dataclass(frozen=True)
@@ -12,6 +16,7 @@ class Cyclic2DPlan:
     global_shape: Tuple[int, int]
     block_shape: Tuple[int, int]
     process_grid: Tuple[int, int]
+    rank_order: Tuple[Tuple[int, int], ...]
     local_shapes: Tuple[Tuple[int, int], ...]
 
 
@@ -72,6 +77,7 @@ def plan_cyclic_2d_layout(
     process_grid = normalize_process_grid(num_devices, process_grid)
     nprow, npcol = process_grid
     block_shape = (T_A, T_A)
+    rank_order = process_grid_rank_order(process_grid)
 
     local_shapes = tuple(
         local_block_cyclic_shape(a.shape, block_shape, process_grid, (prow, pcol))
@@ -83,5 +89,6 @@ def plan_cyclic_2d_layout(
         global_shape=a.shape,
         block_shape=block_shape,
         process_grid=process_grid,
+        rank_order=rank_order,
         local_shapes=local_shapes,
     )
