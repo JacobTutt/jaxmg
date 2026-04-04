@@ -36,20 +36,28 @@ _CUDA_TARGETS = {
 
 @dataclass(frozen=True)
 class _CudaBackendConfig:
-    backend_family: str
+    backend_definition: "_BackendFamilyDefinition"
     bin_dir: str
     mode: str
     n_devices_per_node: int
 
 
-def _resolve_backend_family():
+@dataclass(frozen=True)
+class _BackendFamilyDefinition:
+    family: str
+    cuda_targets: dict[str, dict[str, tuple[str, str]]]
+
+
+def _resolve_backend_family_definition():
     backend_family = os.environ.get("JAXMG_BACKEND_FAMILY", "mg").strip().lower()
-    if backend_family != "mg":
+    try:
+        cuda_targets = _CUDA_TARGETS[backend_family]
+    except KeyError as exc:
         raise ValueError(
             f"Unsupported JAXMg backend family: {backend_family}. "
             "Current supported values: mg"
-        )
-    return backend_family
+        ) from exc
+    return _BackendFamilyDefinition(family=backend_family, cuda_targets=cuda_targets)
 
 
 def _resolve_cuda_bin_dir():
@@ -152,22 +160,22 @@ def _load_backend_dependencies(backend_family: str):
 def _initialize_cuda_backend():
     config = _resolve_cuda_backend_config()
 
-    _load_backend_dependencies(config.backend_family)
+    _load_backend_dependencies(config.backend_definition.family)
 
     jax.config.update("jax_enable_x64", True)
 
     # set if not set already
     os.environ.setdefault("JAXMG_NUMBER_OF_DEVICES", str(config.n_devices_per_node))
 
-    _register_cuda_targets(config.bin_dir, config.backend_family, config.mode)
+    _register_cuda_targets(config.bin_dir, config.backend_definition, config.mode)
 
 
 def _resolve_cuda_backend_config():
-    backend_family = _resolve_backend_family()
+    backend_definition = _resolve_backend_family_definition()
     bin_dir = _resolve_cuda_bin_dir()
     mode, n_devices_per_node = _resolve_runtime_mode()
     return _CudaBackendConfig(
-        backend_family=backend_family,
+        backend_definition=backend_definition,
         bin_dir=bin_dir,
         mode=mode,
         n_devices_per_node=n_devices_per_node,
@@ -195,17 +203,18 @@ def ensure_init_jaxmg_backend():
     _initialize()
 
 
-def _resolve_cuda_targets(backend_family: str, mode: str):
+def _resolve_cuda_targets(backend_definition: _BackendFamilyDefinition, mode: str):
     try:
-        return _CUDA_TARGETS[backend_family][mode]
+        return backend_definition.cuda_targets[mode]
     except KeyError as exc:
         raise ValueError(
-            f"Unsupported CUDA target configuration for backend_family={backend_family!r}, mode={mode!r}"
+            "Unsupported CUDA target configuration for "
+            f"backend_family={backend_definition.family!r}, mode={mode!r}"
         ) from exc
 
 
-def _register_cuda_targets(bin_dir: str, backend_family: str, mode: str):
-    targets = _resolve_cuda_targets(backend_family, mode)
+def _register_cuda_targets(bin_dir: str, backend_definition: _BackendFamilyDefinition, mode: str):
+    targets = _resolve_cuda_targets(backend_definition, mode)
     for target_name, (lib_name, symbol_name) in targets.items():
         library = ctypes.cdll.LoadLibrary(os.path.join(_lib_dir, f"{bin_dir}/{lib_name}"))
         capsule = jax.ffi.pycapsule(getattr(library, symbol_name))
