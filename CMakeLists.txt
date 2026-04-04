@@ -163,6 +163,9 @@ add_library(syevd SHARED
     src/cuda/utils/shm.cc
     ${jax_SOURCE_DIR}/jaxlib/gpu/gpu_kernel_helpers.cc
 )
+add_library(syevd_cusolvermp SHARED
+    src/cuda/syevd_cusolvermp_stub.cc
+)
 add_library(syevd_mp SHARED
     src/cuda/syevd_mp.cu
     src/cuda/utils/jax_utils.cc
@@ -194,6 +197,7 @@ target_include_directories(potrs_mp PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR}
 target_include_directories(potri PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
 target_include_directories(potri_mp PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
 target_include_directories(syevd PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
+target_include_directories(syevd_cusolvermp PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
 target_include_directories(syevd_mp PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
 target_include_directories(syevd_no_V PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
 target_include_directories(syevd_no_V_mp PUBLIC ${CMAKE_SOURCE_DIR} ${jax_SOURCE_DIR} ${SRC_CUDA_INCLUDE} ${SRC_CUDA_ROOT})
@@ -218,6 +222,9 @@ set_target_properties(potri_mp PROPERTIES
     CUDA_ARCHITECTURES "all"
 )
 set_target_properties(syevd PROPERTIES
+    CUDA_ARCHITECTURES "all"
+)
+set_target_properties(syevd_cusolvermp PROPERTIES
     CUDA_ARCHITECTURES "all"
 )
 set_target_properties(syevd_mp PROPERTIES
@@ -293,6 +300,13 @@ target_link_libraries(syevd
     ${CUSOLVERMG_LIB}
     cuda
 )
+target_link_libraries(syevd_cusolvermp
+    absl::strings
+    absl::status
+    absl::statusor
+    CUDA::cupti
+    cuda
+)
 target_link_libraries(syevd_mp
     absl::strings
     absl::status
@@ -341,6 +355,9 @@ install(TARGETS potri_mp
     LIBRARY DESTINATION ${CMAKE_SOURCE_DIR}/${BIN_DST}
 )
 install(TARGETS syevd
+    LIBRARY DESTINATION ${CMAKE_SOURCE_DIR}/${BIN_DST}
+)
+install(TARGETS syevd_cusolvermp
     LIBRARY DESTINATION ${CMAKE_SOURCE_DIR}/${BIN_DST}
 )
 install(TARGETS syevd_mp
