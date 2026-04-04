@@ -30,6 +30,16 @@ _MPMD_TARGETS = {
 }
 
 
+def _resolve_cuda_bin_dir():
+    backend = jax.extend.backend.get_backend()
+    m = re.search(r"cuda[^0-9]*([0-9]+(?:\.[0-9]+)*)", backend.platform_version, re.I)
+    if m:
+        cuda_major = m.group(1)[:2]
+    else:
+        raise OSError("Unable to parse CUDA version")
+    return f"cu{cuda_major}"
+
+
 def _resolve_runtime_mode():
     if not jax.distributed.is_initialized():
         n_devices_per_node = jax.local_device_count()
@@ -106,14 +116,7 @@ def _load(module, libraries):
 
 def _initialize():
     if any("gpu" == d.platform for d in jax.devices()):
-        # Determine CUDA backend
-        backend = jax.extend.backend.get_backend()
-        m = re.search(r"cuda[^0-9]*([0-9]+(?:\.[0-9]+)*)", backend.platform_version, re.I)
-        if m:
-            cuda_major = m.group(1)[:2]
-        else:
-            raise OSError("Unable to parse CUDA version")
-        bin_dir = f"cu{cuda_major}"
+        bin_dir = _resolve_cuda_bin_dir()
 
         # Load Cusolver
         _load("cusolver", ["libcusolverMg.so.11"])
