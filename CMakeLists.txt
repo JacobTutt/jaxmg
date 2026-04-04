@@ -110,16 +110,30 @@ CPMAddPackage(
 )
 message(STATUS "XLA source directory: ${XLA_SOURCE_DIR}")
 
-# Since jaxlib is asking for #include "third_party/gpus/cuda/extras/CUPTI/include/cupti.h"
-# we need to create a symlink to to CUDA_HOME and pretend it can be accessed from third_party
-# Create the target directory
+# JAX headers expect a CUDA tree rooted at third_party/gpus/cuda with an
+# include/ subtree. On systems like Isambard, the real toolkit headers live
+# under targets/<arch>/include rather than directly under CUDA_ROOT/include, so
+# build the minimal expected directory layout explicitly.
 file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/third_party/gpus)
+set(CUDA_THIRD_PARTY_ROOT ${CMAKE_SOURCE_DIR}/third_party/gpus/cuda)
+file(REMOVE_RECURSE ${CUDA_THIRD_PARTY_ROOT})
+file(MAKE_DIRECTORY ${CUDA_THIRD_PARTY_ROOT})
+list(GET CUDAToolkit_INCLUDE_DIRS 0 CUDA_PRIMARY_INCLUDE_DIR)
 execute_process(
-    COMMAND ln -sfn $ENV{CUDA_ROOT} ${CMAKE_SOURCE_DIR}/third_party/gpus/cuda
+    COMMAND ln -sfn ${CUDA_PRIMARY_INCLUDE_DIR} ${CUDA_THIRD_PARTY_ROOT}/include
     RESULT_VARIABLE ln_result
 )
 if(NOT ln_result EQUAL 0)
-    message(FATAL_ERROR "Failed to create symlink for CUDA: $ENV{CUDA_ROOT}")
+    message(FATAL_ERROR "Failed to create CUDA include symlink: ${CUDA_PRIMARY_INCLUDE_DIR}")
+endif()
+if(DEFINED ENV{CUDA_ROOT} AND NOT "$ENV{CUDA_ROOT}" STREQUAL "" AND EXISTS "$ENV{CUDA_ROOT}/extras")
+    execute_process(
+        COMMAND ln -sfn $ENV{CUDA_ROOT}/extras ${CUDA_THIRD_PARTY_ROOT}/extras
+        RESULT_VARIABLE ln_result
+    )
+    if(NOT ln_result EQUAL 0)
+        message(FATAL_ERROR "Failed to create CUDA extras symlink: $ENV{CUDA_ROOT}/extras")
+    endif()
 endif()
 
 if(CUDNN_FOUND)
