@@ -30,6 +30,10 @@ _MPMD_TARGETS = {
 }
 
 
+def _resolve_backend_family():
+    return "mg"
+
+
 def _resolve_cuda_bin_dir():
     backend = jax.extend.backend.get_backend()
     m = re.search(r"cuda[^0-9]*([0-9]+(?:\.[0-9]+)*)", backend.platform_version, re.I)
@@ -115,19 +119,24 @@ def _load(module, libraries):
     ) from last_error
 
 
-def _load_mg_dependencies():
-    _load("cusolver", ["libcusolverMg.so.11"])
-    try:
-        _load("cu13", ["libcusolverMg.so.12"])
-    except OSError:
-        pass
+def _load_backend_dependencies(backend_family: str):
+    if backend_family == "mg":
+        _load("cusolver", ["libcusolverMg.so.11"])
+        try:
+            _load("cu13", ["libcusolverMg.so.12"])
+        except OSError:
+            pass
+        return
+
+    raise ValueError(f"Unsupported JAXMg backend family: {backend_family}")
 
 
 def _initialize():
     if any("gpu" == d.platform for d in jax.devices()):
+        backend_family = _resolve_backend_family()
         bin_dir = _resolve_cuda_bin_dir()
 
-        _load_mg_dependencies()
+        _load_backend_dependencies(backend_family)
 
         jax.config.update("jax_enable_x64", True)
         mode, n_devices_per_node = _resolve_runtime_mode()
