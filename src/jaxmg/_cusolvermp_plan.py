@@ -4,17 +4,17 @@ from typing import List, Tuple
 from jax import Array
 from jax.sharding import Mesh, PartitionSpec as P
 
+from ._cusolvermp_backend import CuSolverMpBackendPlan, plan_cusolvermp_backend
 from ._cusolvermp_contract import (
     CuSolverMpPotrsContract,
     plan_potrs_cusolvermp_contract,
 )
-from ._cusolvermp_runtime import CuSolverMpRuntimePlan, plan_cusolvermp_runtime
 from ._potrs import _PotrsMigrationPreview, _plan_potrs_migration_preview
 
 
 @dataclass(frozen=True)
 class PotrsCuSolverMpPlan:
-    runtime: CuSolverMpRuntimePlan
+    backend: CuSolverMpBackendPlan
     contract: CuSolverMpPotrsContract
     potrs: _PotrsMigrationPreview
 
@@ -29,7 +29,7 @@ def plan_potrs_cusolvermp(
     process_grid: Tuple[int, int] | None = None,
 ) -> PotrsCuSolverMpPlan:
     """Build the solver-level planning object for a future cuSOLVERMp potrs path."""
-    runtime = plan_cusolvermp_runtime(mesh, process_grid=process_grid)
+    backend = plan_cusolvermp_backend(mesh, process_grid=process_grid)
     contract = plan_potrs_cusolvermp_contract(b)
     potrs = _plan_potrs_migration_preview(
         a,
@@ -38,6 +38,6 @@ def plan_potrs_cusolvermp(
         mesh=mesh,
         in_specs=in_specs,
         pad=pad,
-        process_grid=runtime.runtime.process_grid,
+        process_grid=backend.runtime.runtime.process_grid,
     )
-    return PotrsCuSolverMpPlan(runtime=runtime, contract=contract, potrs=potrs)
+    return PotrsCuSolverMpPlan(backend=backend, contract=contract, potrs=potrs)

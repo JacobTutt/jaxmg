@@ -12,17 +12,18 @@ def test_plan_potrs_cusolvermp_combines_runtime_and_potrs_preview():
 
     plan = plan_potrs_cusolvermp(a, b, 4, mesh=mesh, in_specs=(P("x", None),))
 
-    assert plan.runtime.backend_family == "mp"
-    assert plan.runtime.requires_mpi is True
-    assert plan.runtime.requires_nccl is True
-    assert plan.runtime.max_nrhs == 1
-    assert plan.runtime.readiness.expected_process_count == mesh.devices.size
+    assert plan.backend.backend_family == "mp"
+    assert plan.backend.runtime.requires_mpi is True
+    assert plan.backend.runtime.requires_nccl is True
+    assert plan.backend.runtime.max_nrhs == 1
+    assert plan.backend.runtime.readiness.expected_process_count == mesh.devices.size
+    assert plan.backend.targets[0].operation == "potrs"
     assert plan.contract.supported is True
     assert plan.contract.input_nrhs == 1
-    assert plan.runtime.runtime.global_device_count == mesh.devices.size
-    assert plan.runtime.runtime.process_grid == (1, 1)
+    assert plan.backend.runtime.runtime.global_device_count == mesh.devices.size
+    assert plan.backend.runtime.runtime.process_grid == (1, 1)
     assert plan.potrs.current.axis_name == "x"
     expected_padding = 2 if mesh.devices.size == 1 else 1
     assert plan.potrs.current.padding == expected_padding
     assert plan.potrs.cyclic_2d.block_shape == (4, 4)
-    assert plan.potrs.cyclic_2d.process_grid == plan.runtime.runtime.process_grid
+    assert plan.potrs.cyclic_2d.process_grid == plan.backend.runtime.runtime.process_grid

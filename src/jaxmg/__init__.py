@@ -23,6 +23,11 @@ from ._block_cyclic_2d import (
 )
 from ._cyclic_2d import Cyclic2DPlan, cyclic_2d, plan_cyclic_2d_layout
 from ._distributed_runtime import DistributedRuntimePlan, plan_distributed_runtime
+from ._cusolvermp_backend import (
+    CuSolverMpBackendPlan,
+    CuSolverMpTargetPlan,
+    plan_cusolvermp_backend,
+)
 from ._cusolvermp_contract import CuSolverMpPotrsContract, plan_potrs_cusolvermp_contract
 from ._cusolvermp_runtime import (
     CuSolverMpRuntimePlan,
@@ -60,6 +65,9 @@ __all__ = [
     "plan_cyclic_2d_layout",
     "DistributedRuntimePlan",
     "plan_distributed_runtime",
+    "CuSolverMpBackendPlan",
+    "CuSolverMpTargetPlan",
+    "plan_cusolvermp_backend",
     "CuSolverMpPotrsContract",
     "plan_potrs_cusolvermp_contract",
     "CuSolverMpRuntimePlan",
