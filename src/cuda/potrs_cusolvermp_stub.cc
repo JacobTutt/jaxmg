@@ -35,20 +35,32 @@ struct CuSolverMpPotrsStubAttrs
   int64_t rhs_block_cols;
 };
 
+} // namespace JAX_GPU_NAMESPACE
+} // namespace jax
+
+namespace xla::ffi
+{
 XLA_FFI_REGISTER_STRUCT_ATTR_DECODING(
-    CuSolverMpPotrsStubAttrs, ffi::StructMember<int64_t>("T_A"),
-    ffi::StructMember<std::string_view>("context_json"),
-    ffi::StructMember<int64_t>("process_rank"),
-    ffi::StructMember<int64_t>("process_count"),
-    ffi::StructMember<int64_t>("local_device_count"),
-    ffi::StructMember<int64_t>("local_device_index"),
-    ffi::StructMember<int64_t>("global_device_count"),
-    ffi::StructMember<int64_t>("process_grid_nprow"),
-    ffi::StructMember<int64_t>("process_grid_npcol"),
-    ffi::StructMember<int64_t>("matrix_block_rows"),
-    ffi::StructMember<int64_t>("matrix_block_cols"),
-    ffi::StructMember<int64_t>("rhs_block_rows"),
-    ffi::StructMember<int64_t>("rhs_block_cols"));
+    ::jax::JAX_GPU_NAMESPACE::CuSolverMpPotrsStubAttrs,
+    StructMember<int64_t>("T_A"),
+    StructMember<std::string_view>("context_json"),
+    StructMember<int64_t>("process_rank"),
+    StructMember<int64_t>("process_count"),
+    StructMember<int64_t>("local_device_count"),
+    StructMember<int64_t>("local_device_index"),
+    StructMember<int64_t>("global_device_count"),
+    StructMember<int64_t>("process_grid_nprow"),
+    StructMember<int64_t>("process_grid_npcol"),
+    StructMember<int64_t>("matrix_block_rows"),
+    StructMember<int64_t>("matrix_block_cols"),
+    StructMember<int64_t>("rhs_block_rows"),
+    StructMember<int64_t>("rhs_block_cols"));
+} // namespace xla::ffi
+
+namespace jax
+{
+namespace JAX_GPU_NAMESPACE
+{
 
 ffi::Error PotrsCuSolverMpDispatch(
     gpuStream_t stream, ffi::ScratchAllocator scratch, ffi::AnyBuffer a,
