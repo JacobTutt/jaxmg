@@ -9,7 +9,6 @@
 #include "jaxlib/gpu/vendor.h"
 // JAXMg
 #include "include/cusolvermp_context.h"
-#include "utils/jax_utils.h"
 // XLA
 #include "xla/ffi/api/ffi.h"
 
@@ -149,14 +148,16 @@ ffi::Error PotrsCuSolverMpDispatch(
   auto out_b_data = static_cast<float *>(out_b->untyped_data());
   auto status_data = status->typed_data();
 
-  JAX_FFI_RETURN_IF_GPU_ERROR(
-      gpuMemcpy(out_a_data, input_a_data, a.size_bytes(), gpuMemcpyDeviceToDevice));
-  JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpy(
-      out_b_data, probe->solved_rhs.data(), sizeof(float) * probe->solved_rhs.size(),
-      gpuMemcpyHostToDevice));
+  FFI_RETURN_IF_ERROR_STATUS(
+      JAX_AS_STATUS(gpuMemcpy(out_a_data, input_a_data, a.size_bytes(),
+                              gpuMemcpyDeviceToDevice)));
+  FFI_RETURN_IF_ERROR_STATUS(
+      JAX_AS_STATUS(gpuMemcpy(out_b_data, probe->solved_rhs.data(),
+                              sizeof(float) * probe->solved_rhs.size(),
+                              gpuMemcpyHostToDevice)));
   int32_t status_val = 0;
-  JAX_FFI_RETURN_IF_GPU_ERROR(
-      gpuMemcpy(status_data, &status_val, sizeof(status_val), gpuMemcpyHostToDevice));
+  FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(
+      gpuMemcpy(status_data, &status_val, sizeof(status_val), gpuMemcpyHostToDevice)));
 
   return ffi::Error::Success();
 #else
