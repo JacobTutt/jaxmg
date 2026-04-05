@@ -1,7 +1,11 @@
 #include "include/cusolvermp_context.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdlib>
+#include <fstream>
+#include <thread>
 #include <vector>
 
 #if defined(JAXMG_HAVE_CUSOLVERMP) && defined(JAXMG_HAVE_NCCL)
@@ -12,6 +16,83 @@
 
 namespace jaxmg
 {
+
+namespace
+{
+
+std::string GetEnvOrDefault(const char *name, const std::string &default_value)
+{
+  const char *value = std::getenv(name);
+  return (value != nullptr && value[0] != '\0') ? std::string(value) : default_value;
+}
+
+std::string ResolveNcclBootstrapPath(const CuSolverMpContextSpec &spec)
+{
+  const char *explicit_path = std::getenv("JAXMG_CUSOLVERMP_BOOTSTRAP_FILE");
+  if (explicit_path != nullptr && explicit_path[0] != '\0')
+  {
+    return std::string(explicit_path);
+  }
+
+  std::string dir = GetEnvOrDefault("JAXMG_CUSOLVERMP_BOOTSTRAP_DIR", "/tmp");
+  std::string token = GetEnvOrDefault(
+      "JAXMG_CUSOLVERMP_BOOTSTRAP_TOKEN",
+      GetEnvOrDefault("SLURM_JOB_ID", "local"));
+  return dir + "/jaxmg_cusolvermp_nccl_" + token + "_" +
+         std::to_string(spec.process_count) + ".bin";
+}
+
+#if defined(JAXMG_HAVE_CUSOLVERMP) && defined(JAXMG_HAVE_NCCL)
+bool WriteNcclUniqueId(const std::string &path, const ncclUniqueId &comm_id)
+{
+  std::ofstream out(path, std::ios::binary | std::ios::trunc);
+  if (!out)
+  {
+    return false;
+  }
+  out.write(reinterpret_cast<const char *>(&comm_id), sizeof(comm_id));
+  out.close();
+  return out.good();
+}
+
+bool ReadNcclUniqueIdWithRetry(
+    const std::string &path, ncclUniqueId *comm_id, int timeout_ms)
+{
+  auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  while (std::chrono::steady_clock::now() < deadline)
+  {
+    std::ifstream in(path, std::ios::binary);
+    if (in)
+    {
+      in.read(reinterpret_cast<char *>(comm_id), sizeof(*comm_id));
+      if (in.gcount() == sizeof(*comm_id))
+      {
+        return true;
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  return false;
+}
+#endif
+
+int OwnerCoord(int global_index, int block_size, int nprocs, int src_proc = 0)
+{
+  return (src_proc + global_index / block_size) % nprocs;
+}
+
+int LocalIndexFromGlobal(
+    int global_index, int block_size, int proc_coord, int nprocs,
+    int src_proc = 0)
+{
+  int block_index = global_index / block_size;
+  int block_offset = (proc_coord - src_proc + nprocs) % nprocs;
+  int local_block_index = (block_index - block_offset) / nprocs;
+  return local_block_index * block_size + (global_index % block_size);
+}
+
+} // namespace
 
 CuSolverMpContextPlan BuildCuSolverMpContextPlan()
 {
@@ -117,16 +198,6 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   }
   return std::nullopt;
 #else
-  if (spec.process_count != 1)
-  {
-    if (error_message != nullptr)
-    {
-      *error_message =
-          "the initial real cuSOLVERMp probe only supports a single-rank launch";
-    }
-    return std::nullopt;
-  }
-
   auto fail = [error_message](const std::string &message)
       -> std::optional<CuSolverMpRuntimeProbeResult> {
     if (error_message != nullptr)
@@ -171,10 +242,28 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   }
 
   ncclUniqueId comm_id;
-  ncclResult_t nccl_status = ncclGetUniqueId(&comm_id);
-  if (nccl_status != ncclSuccess)
+  ncclResult_t nccl_status = ncclSuccess;
+  std::string bootstrap_path = ResolveNcclBootstrapPath(spec);
+  if (spec.process_rank == 0)
   {
-    return fail("ncclGetUniqueId failed: " + nccl_error_string(nccl_status));
+    nccl_status = ncclGetUniqueId(&comm_id);
+    if (nccl_status != ncclSuccess)
+    {
+      return fail("ncclGetUniqueId failed: " + nccl_error_string(nccl_status));
+    }
+    if (!WriteNcclUniqueId(bootstrap_path, comm_id))
+    {
+      return fail("failed to write NCCL bootstrap file: " + bootstrap_path);
+    }
+  }
+  else
+  {
+    int timeout_ms = std::stoi(
+        GetEnvOrDefault("JAXMG_CUSOLVERMP_BOOTSTRAP_TIMEOUT_MS", "10000"));
+    if (!ReadNcclUniqueIdWithRetry(bootstrap_path, &comm_id, timeout_ms))
+    {
+      return fail("timed out waiting for NCCL bootstrap file: " + bootstrap_path);
+    }
   }
 
   nccl_status = ncclCommInitRank(&comm, spec.process_count, comm_id, spec.process_rank);
@@ -346,7 +435,9 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
       1.0f);
   std::vector<float> host_input_a_rowmajor;
   std::vector<float> host_input_b;
-  if (input_a != nullptr && input_b != nullptr)
+  bool use_input_buffers =
+      spec.process_count == 1 && input_a != nullptr && input_b != nullptr;
+  if (use_input_buffers)
   {
     host_input_a_rowmajor.resize(static_cast<size_t>(problem.matrix_rows * problem.matrix_cols));
     host_input_b.resize(static_cast<size_t>(problem.rhs_rows * problem.rhs_cols));
@@ -395,10 +486,38 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   }
   else
   {
-    for (int64_t i = 0; i < std::min(local_matrix_rows, local_matrix_cols); ++i)
+    for (int64_t global_i = 0;
+         global_i < std::min(problem.matrix_rows, problem.matrix_cols); ++global_i)
     {
-      host_a[static_cast<size_t>(i + i * local_matrix_rows)] =
-          static_cast<float>(i + 1);
+      if (OwnerCoord(global_i, problem.matrix_block_rows, spec.process_grid.nprow) !=
+              process_row ||
+          OwnerCoord(global_i, problem.matrix_block_cols, spec.process_grid.npcol) !=
+              process_col)
+      {
+        continue;
+      }
+
+      int local_row = LocalIndexFromGlobal(
+          global_i, problem.matrix_block_rows, process_row, spec.process_grid.nprow);
+      int local_col = LocalIndexFromGlobal(
+          global_i, problem.matrix_block_cols, process_col, spec.process_grid.npcol);
+      host_a[static_cast<size_t>(local_row + local_col * local_matrix_rows)] =
+          static_cast<float>(global_i + 1);
+    }
+
+    if (local_rhs_cols > 0)
+    {
+      for (int64_t global_i = 0; global_i < problem.rhs_rows; ++global_i)
+      {
+        if (OwnerCoord(global_i, problem.rhs_block_rows, spec.process_grid.nprow) !=
+            process_row)
+        {
+          continue;
+        }
+        int local_row = LocalIndexFromGlobal(
+            global_i, problem.rhs_block_rows, process_row, spec.process_grid.nprow);
+        host_b[static_cast<size_t>(local_row)] = 1.0f;
+      }
     }
   }
 
@@ -628,11 +747,22 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   }
   else
   {
-    for (int64_t i = 0; i < local_rhs_rows; ++i)
+    if (local_rhs_cols > 0)
     {
-      float expected = 1.0f / static_cast<float>(i + 1);
-      max_abs_error =
-          std::max(max_abs_error, std::fabs(host_b[static_cast<size_t>(i)] - expected));
+      for (int64_t global_i = 0; global_i < problem.rhs_rows; ++global_i)
+      {
+        if (OwnerCoord(global_i, problem.rhs_block_rows, spec.process_grid.nprow) !=
+            process_row)
+        {
+          continue;
+        }
+        int local_row = LocalIndexFromGlobal(
+            global_i, problem.rhs_block_rows, process_row, spec.process_grid.nprow);
+        float expected = 1.0f / static_cast<float>(global_i + 1);
+        max_abs_error = std::max(
+            max_abs_error,
+            std::fabs(host_b[static_cast<size_t>(local_row)] - expected));
+      }
     }
   }
 

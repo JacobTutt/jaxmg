@@ -144,6 +144,7 @@ ffi::Error PotrsCuSolverMpDispatch(
   }
 
   auto input_a_data = static_cast<float *>(a.untyped_data());
+  auto input_b_data = static_cast<float *>(b.untyped_data());
   auto out_a_data = static_cast<float *>(out_a->untyped_data());
   auto out_b_data = static_cast<float *>(out_b->untyped_data());
   auto status_data = status->typed_data();
@@ -156,13 +157,22 @@ ffi::Error PotrsCuSolverMpDispatch(
         absl::StrFormat("potrs_cusolvermp failed to copy A to output: gpuMemcpy returned %d",
                         static_cast<int>(copy_status)));
   }
-  copy_status = gpuMemcpy(out_b_data, probe->solved_rhs.data(),
-                          sizeof(float) * probe->solved_rhs.size(),
-                          gpuMemcpyHostToDevice);
+  size_t output_b_elements = out_b->size_bytes() / sizeof(float);
+  if (probe->solved_rhs.size() == output_b_elements)
+  {
+    copy_status = gpuMemcpy(out_b_data, probe->solved_rhs.data(),
+                            sizeof(float) * probe->solved_rhs.size(),
+                            gpuMemcpyHostToDevice);
+  }
+  else
+  {
+    copy_status = gpuMemcpy(out_b_data, input_b_data, b.size_bytes(),
+                            gpuMemcpyDeviceToDevice);
+  }
   if (copy_status != gpuSuccess)
   {
     return ffi::Error::Internal(
-        absl::StrFormat("potrs_cusolvermp failed to copy solution to output: gpuMemcpy returned %d",
+        absl::StrFormat("potrs_cusolvermp failed to copy RHS to output: gpuMemcpy returned %d",
                         static_cast<int>(copy_status)));
   }
   int32_t status_val = 0;
