@@ -69,6 +69,7 @@ struct CuSolverMpRuntimeProbeResult
   int potrs_info;
   float solution_max_abs_error;
   float residual_max_abs_error;
+  std::vector<float> solved_rhs;
 };
 
 CuSolverMpContextPlan BuildCuSolverMpContextPlan();

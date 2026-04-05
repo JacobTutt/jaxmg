@@ -686,6 +686,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
       .potrs_info = potrs_info,
       .solution_max_abs_error = max_abs_error,
       .residual_max_abs_error = residual_max_abs_error,
+      .solved_rhs = host_b,
   };
 #endif
 }

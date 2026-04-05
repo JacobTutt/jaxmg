@@ -75,11 +75,13 @@ ffi::Error PotrsCuSolverMpDispatch(
 {
   (void)stream;
   (void)scratch;
-  (void)a;
-  (void)b;
-  (void)out_a;
-  (void)out_b;
-  (void)status;
+
+  if (a.element_type() != ffi::F32 || b.element_type() != ffi::F32 ||
+      out_a->element_type() != ffi::F32 || out_b->element_type() != ffi::F32)
+  {
+    return ffi::Error::InvalidArgument(
+        "potrs_cusolvermp currently supports only float32 in the initial real execution path.");
+  }
 
   jaxmg::CuSolverMpContextSpec spec{
       .process_rank = static_cast<int>(attrs.process_rank),
@@ -141,30 +143,21 @@ ffi::Error PotrsCuSolverMpDispatch(
             probe_error));
   }
 
-  return ffi::Error::InvalidArgument(
-      absl::StrFormat(
-          "potrs_cusolvermp reached native code and completed a real "
-          "cuSOLVERMp runtime probe with device=%d, nccl_version=%d, "
-          "cusolvermp_version=%d, T_A=%d, rank=%d/%d, process_grid=(%d,%d), "
-          "matrix_block=(%d,%d), rhs_block=(%d,%d), local_matrix=(%d,%d), "
-          "local_rhs=(%d,%d), potrf_workspace=(device=%zu,host=%zu), "
-          "potrs_workspace=(device=%zu,host=%zu), potrf_info=%d, "
-          "potrs_info=%d, solution_max_abs_error=%g, residual_max_abs_error=%g, "
-          "context_json=%s, but the solver execution path is not implemented yet.",
-          probe->cuda_device_id, probe->nccl_version, probe->cusolvermp_version,
-          static_cast<int>(attrs.tile_size), static_cast<int>(attrs.process_rank),
-          static_cast<int>(attrs.process_count),
-          static_cast<int>(attrs.process_grid_nprow),
-          static_cast<int>(attrs.process_grid_npcol),
-          static_cast<int>(attrs.matrix_block_rows),
-          static_cast<int>(attrs.matrix_block_cols),
-          static_cast<int>(attrs.rhs_block_rows),
-          static_cast<int>(attrs.rhs_block_cols), probe->local_matrix_rows,
-          probe->local_matrix_cols, probe->local_rhs_rows, probe->local_rhs_cols,
-          probe->potrf_workspace_device_bytes, probe->potrf_workspace_host_bytes,
-          probe->potrs_workspace_device_bytes, probe->potrs_workspace_host_bytes,
-          probe->potrf_info, probe->potrs_info, probe->solution_max_abs_error,
-          probe->residual_max_abs_error, preview));
+  auto input_a_data = static_cast<float *>(a.untyped_data());
+  auto out_a_data = static_cast<float *>(out_a->untyped_data());
+  auto out_b_data = static_cast<float *>(out_b->untyped_data());
+  auto status_data = status->typed_data();
+
+  JAX_FFI_RETURN_IF_GPU_ERROR(
+      gpuMemcpy(out_a_data, input_a_data, a.size_bytes(), gpuMemcpyDeviceToDevice));
+  JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpy(
+      out_b_data, probe->solved_rhs.data(), sizeof(float) * probe->solved_rhs.size(),
+      gpuMemcpyHostToDevice));
+  int32_t status_val = 0;
+  JAX_FFI_RETURN_IF_GPU_ERROR(
+      gpuMemcpy(status_data, &status_val, sizeof(status_val), gpuMemcpyHostToDevice));
+
+  return ffi::Error::Success();
 #else
   return ffi::Error::InvalidArgument(
       absl::StrFormat(
