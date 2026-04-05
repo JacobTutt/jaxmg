@@ -68,6 +68,7 @@ struct CuSolverMpRuntimeProbeResult
   int potrf_info;
   int potrs_info;
   float solution_max_abs_error;
+  float residual_max_abs_error;
 };
 
 CuSolverMpContextPlan BuildCuSolverMpContextPlan();
@@ -83,7 +84,7 @@ std::vector<std::string> CuSolverMpPotrsStubContractIssues(
 
 std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     const CuSolverMpContextSpec &spec, const CuSolverMpPotrsProblemSpec &problem,
-    std::string *error_message);
+    const void *input_a, const void *input_b, std::string *error_message);
 
 } // namespace jaxmg
 

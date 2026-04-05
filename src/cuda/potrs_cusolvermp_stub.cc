@@ -130,7 +130,8 @@ ffi::Error PotrsCuSolverMpDispatch(
 
 #if defined(JAXMG_HAVE_CUSOLVERMP) && defined(JAXMG_HAVE_NCCL)
   std::string probe_error;
-  auto probe = jaxmg::ProbeCuSolverMpRuntime(spec, problem, &probe_error);
+  auto probe = jaxmg::ProbeCuSolverMpRuntime(
+      spec, problem, a.untyped_data(), b.untyped_data(), &probe_error);
   if (!probe.has_value())
   {
     return ffi::Error::InvalidArgument(
@@ -148,8 +149,8 @@ ffi::Error PotrsCuSolverMpDispatch(
           "matrix_block=(%d,%d), rhs_block=(%d,%d), local_matrix=(%d,%d), "
           "local_rhs=(%d,%d), potrf_workspace=(device=%zu,host=%zu), "
           "potrs_workspace=(device=%zu,host=%zu), potrf_info=%d, "
-          "potrs_info=%d, solution_max_abs_error=%g, context_json=%s, but the "
-          "solver execution path is not implemented yet.",
+          "potrs_info=%d, solution_max_abs_error=%g, residual_max_abs_error=%g, "
+          "context_json=%s, but the solver execution path is not implemented yet.",
           probe->cuda_device_id, probe->nccl_version, probe->cusolvermp_version,
           static_cast<int>(attrs.tile_size), static_cast<int>(attrs.process_rank),
           static_cast<int>(attrs.process_count),
@@ -163,7 +164,7 @@ ffi::Error PotrsCuSolverMpDispatch(
           probe->potrf_workspace_device_bytes, probe->potrf_workspace_host_bytes,
           probe->potrs_workspace_device_bytes, probe->potrs_workspace_host_bytes,
           probe->potrf_info, probe->potrs_info, probe->solution_max_abs_error,
-          preview));
+          probe->residual_max_abs_error, preview));
 #else
   return ffi::Error::InvalidArgument(
       absl::StrFormat(

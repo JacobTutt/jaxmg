@@ -107,7 +107,7 @@ std::vector<std::string> CuSolverMpPotrsStubContractIssues(
 
 std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     const CuSolverMpContextSpec &spec, const CuSolverMpPotrsProblemSpec &problem,
-    std::string *error_message)
+    const void *input_a, const void *input_b, std::string *error_message)
 {
 #if !(defined(JAXMG_HAVE_CUSOLVERMP) && defined(JAXMG_HAVE_NCCL))
   if (error_message != nullptr)
@@ -344,10 +344,62 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
       static_cast<size_t>(std::max<int64_t>(1, local_rhs_rows) *
                           std::max<int64_t>(1, local_rhs_cols)),
       1.0f);
-  for (int64_t i = 0; i < std::min(local_matrix_rows, local_matrix_cols); ++i)
+  std::vector<float> host_input_a_rowmajor;
+  std::vector<float> host_input_b;
+  if (input_a != nullptr && input_b != nullptr)
   {
-    host_a[static_cast<size_t>(i + i * local_matrix_rows)] =
-        static_cast<float>(i + 1);
+    host_input_a_rowmajor.resize(static_cast<size_t>(problem.matrix_rows * problem.matrix_cols));
+    host_input_b.resize(static_cast<size_t>(problem.rhs_rows * problem.rhs_cols));
+
+    cuda_status = cudaMemcpy(host_input_a_rowmajor.data(), input_a,
+                             sizeof(float) * host_input_a_rowmajor.size(),
+                             cudaMemcpyDeviceToHost);
+    if (cuda_status != cudaSuccess)
+    {
+      cudaFree(d_b);
+      cudaFree(d_a);
+      cusolverMpDestroyMatrixDesc(desc_b);
+      cusolverMpDestroyMatrixDesc(desc_a);
+      cusolverMpDestroyGrid(grid);
+      cusolverMpDestroy(handle);
+      cudaStreamDestroy(stream);
+      ncclCommDestroy(comm);
+      return fail("cudaMemcpy(input A) failed: " + cuda_error_string(cuda_status));
+    }
+
+    cuda_status = cudaMemcpy(host_input_b.data(), input_b,
+                             sizeof(float) * host_input_b.size(),
+                             cudaMemcpyDeviceToHost);
+    if (cuda_status != cudaSuccess)
+    {
+      cudaFree(d_b);
+      cudaFree(d_a);
+      cusolverMpDestroyMatrixDesc(desc_b);
+      cusolverMpDestroyMatrixDesc(desc_a);
+      cusolverMpDestroyGrid(grid);
+      cusolverMpDestroy(handle);
+      cudaStreamDestroy(stream);
+      ncclCommDestroy(comm);
+      return fail("cudaMemcpy(input b) failed: " + cuda_error_string(cuda_status));
+    }
+
+    for (int64_t col = 0; col < problem.matrix_cols; ++col)
+    {
+      for (int64_t row = 0; row < problem.matrix_rows; ++row)
+      {
+        host_a[static_cast<size_t>(row + col * local_matrix_rows)] =
+            host_input_a_rowmajor[static_cast<size_t>(row * problem.matrix_cols + col)];
+      }
+    }
+    std::copy(host_input_b.begin(), host_input_b.end(), host_b.begin());
+  }
+  else
+  {
+    for (int64_t i = 0; i < std::min(local_matrix_rows, local_matrix_cols); ++i)
+    {
+      host_a[static_cast<size_t>(i + i * local_matrix_rows)] =
+          static_cast<float>(i + 1);
+    }
   }
 
   cuda_status = cudaMemcpy(d_a, host_a.data(), matrix_bytes, cudaMemcpyHostToDevice);
@@ -558,10 +610,30 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   }
 
   float max_abs_error = 0.0f;
-  for (int64_t i = 0; i < local_rhs_rows; ++i)
+  float residual_max_abs_error = 0.0f;
+  if (!host_input_a_rowmajor.empty())
   {
-    float expected = 1.0f / static_cast<float>(i + 1);
-    max_abs_error = std::max(max_abs_error, std::fabs(host_b[static_cast<size_t>(i)] - expected));
+    for (int64_t row = 0; row < problem.matrix_rows; ++row)
+    {
+      float accum = 0.0f;
+      for (int64_t col = 0; col < problem.matrix_cols; ++col)
+      {
+        accum += host_input_a_rowmajor[static_cast<size_t>(row * problem.matrix_cols + col)] *
+                 host_b[static_cast<size_t>(col)];
+      }
+      residual_max_abs_error = std::max(
+          residual_max_abs_error,
+          std::fabs(accum - host_input_b[static_cast<size_t>(row)]));
+    }
+  }
+  else
+  {
+    for (int64_t i = 0; i < local_rhs_rows; ++i)
+    {
+      float expected = 1.0f / static_cast<float>(i + 1);
+      max_abs_error =
+          std::max(max_abs_error, std::fabs(host_b[static_cast<size_t>(i)] - expected));
+    }
   }
 
   int nccl_version = 0;
@@ -613,6 +685,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
       .potrf_info = potrf_info,
       .potrs_info = potrs_info,
       .solution_max_abs_error = max_abs_error,
+      .residual_max_abs_error = residual_max_abs_error,
   };
 #endif
 }
