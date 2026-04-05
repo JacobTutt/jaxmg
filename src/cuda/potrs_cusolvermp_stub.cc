@@ -146,8 +146,9 @@ ffi::Error PotrsCuSolverMpDispatch(
           "cuSOLVERMp runtime probe with device=%d, nccl_version=%d, "
           "cusolvermp_version=%d, T_A=%d, rank=%d/%d, process_grid=(%d,%d), "
           "matrix_block=(%d,%d), rhs_block=(%d,%d), local_matrix=(%d,%d), "
-          "local_rhs=(%d,%d), context_json=%s, but the solver execution path "
-          "is not implemented yet.",
+          "local_rhs=(%d,%d), potrf_workspace=(device=%zu,host=%zu), "
+          "potrs_workspace=(device=%zu,host=%zu), context_json=%s, but the "
+          "solver execution path is not implemented yet.",
           probe->cuda_device_id, probe->nccl_version, probe->cusolvermp_version,
           static_cast<int>(attrs.tile_size), static_cast<int>(attrs.process_rank),
           static_cast<int>(attrs.process_count),
@@ -158,6 +159,8 @@ ffi::Error PotrsCuSolverMpDispatch(
           static_cast<int>(attrs.rhs_block_rows),
           static_cast<int>(attrs.rhs_block_cols), probe->local_matrix_rows,
           probe->local_matrix_cols, probe->local_rhs_rows, probe->local_rhs_cols,
+          probe->potrf_workspace_device_bytes, probe->potrf_workspace_host_bytes,
+          probe->potrs_workspace_device_bytes, probe->potrs_workspace_host_bytes,
           preview));
 #else
   return ffi::Error::InvalidArgument(

@@ -150,6 +150,8 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   cusolverMpGrid_t grid = nullptr;
   cusolverMpMatrixDescriptor_t desc_a = nullptr;
   cusolverMpMatrixDescriptor_t desc_b = nullptr;
+  void *d_a = nullptr;
+  void *d_b = nullptr;
 
   cudaError_t cuda_status = cudaSetDevice(spec.local_device_index);
   if (cuda_status != cudaSuccess)
@@ -260,10 +262,82 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
                 cusolver_error_string(cusolver_status));
   }
 
+  size_t matrix_bytes = static_cast<size_t>(
+      std::max<int64_t>(1, local_matrix_rows) *
+      std::max<int64_t>(1, local_matrix_cols) * sizeof(float));
+  cuda_status = cudaMalloc(&d_a, matrix_bytes);
+  if (cuda_status != cudaSuccess)
+  {
+    cusolverMpDestroyMatrixDesc(desc_b);
+    cusolverMpDestroyMatrixDesc(desc_a);
+    cusolverMpDestroyGrid(grid);
+    cusolverMpDestroy(handle);
+    cudaStreamDestroy(stream);
+    ncclCommDestroy(comm);
+    return fail("cudaMalloc(A) failed: " + cuda_error_string(cuda_status));
+  }
+
+  size_t rhs_bytes = static_cast<size_t>(
+      std::max<int64_t>(1, local_rhs_rows) *
+      std::max<int64_t>(1, local_rhs_cols) * sizeof(float));
+  cuda_status = cudaMalloc(&d_b, rhs_bytes);
+  if (cuda_status != cudaSuccess)
+  {
+    cudaFree(d_a);
+    cusolverMpDestroyMatrixDesc(desc_b);
+    cusolverMpDestroyMatrixDesc(desc_a);
+    cusolverMpDestroyGrid(grid);
+    cusolverMpDestroy(handle);
+    cudaStreamDestroy(stream);
+    ncclCommDestroy(comm);
+    return fail("cudaMalloc(B) failed: " + cuda_error_string(cuda_status));
+  }
+
+  size_t potrf_workspace_device_bytes = 0;
+  size_t potrf_workspace_host_bytes = 0;
+  cusolver_status = cusolverMpPotrf_bufferSize(
+      handle, CUBLAS_FILL_MODE_LOWER, problem.matrix_rows, d_a, 1, 1, desc_a,
+      CUDA_R_32F, &potrf_workspace_device_bytes, &potrf_workspace_host_bytes);
+  if (cusolver_status != CUSOLVER_STATUS_SUCCESS)
+  {
+    cudaFree(d_b);
+    cudaFree(d_a);
+    cusolverMpDestroyMatrixDesc(desc_b);
+    cusolverMpDestroyMatrixDesc(desc_a);
+    cusolverMpDestroyGrid(grid);
+    cusolverMpDestroy(handle);
+    cudaStreamDestroy(stream);
+    ncclCommDestroy(comm);
+    return fail("cusolverMpPotrf_bufferSize failed with status " +
+                cusolver_error_string(cusolver_status));
+  }
+
+  size_t potrs_workspace_device_bytes = 0;
+  size_t potrs_workspace_host_bytes = 0;
+  cusolver_status = cusolverMpPotrs_bufferSize(
+      handle, CUBLAS_FILL_MODE_LOWER, problem.matrix_rows, problem.rhs_cols,
+      d_a, 1, 1, desc_a, d_b, 1, 1, desc_b, CUDA_R_32F,
+      &potrs_workspace_device_bytes, &potrs_workspace_host_bytes);
+  if (cusolver_status != CUSOLVER_STATUS_SUCCESS)
+  {
+    cudaFree(d_b);
+    cudaFree(d_a);
+    cusolverMpDestroyMatrixDesc(desc_b);
+    cusolverMpDestroyMatrixDesc(desc_a);
+    cusolverMpDestroyGrid(grid);
+    cusolverMpDestroy(handle);
+    cudaStreamDestroy(stream);
+    ncclCommDestroy(comm);
+    return fail("cusolverMpPotrs_bufferSize failed with status " +
+                cusolver_error_string(cusolver_status));
+  }
+
   int nccl_version = 0;
   nccl_status = ncclGetVersion(&nccl_version);
   if (nccl_status != ncclSuccess)
   {
+    cudaFree(d_b);
+    cudaFree(d_a);
     cusolverMpDestroyMatrixDesc(desc_b);
     cusolverMpDestroyMatrixDesc(desc_a);
     cusolverMpDestroyGrid(grid);
@@ -273,6 +347,8 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     return fail("ncclGetVersion failed: " + nccl_error_string(nccl_status));
   }
 
+  cudaFree(d_b);
+  cudaFree(d_a);
   cusolverMpDestroyMatrixDesc(desc_b);
   cusolverMpDestroyMatrixDesc(desc_a);
   cusolverMpDestroyGrid(grid);
@@ -288,6 +364,10 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
       .local_matrix_cols = local_matrix_cols,
       .local_rhs_rows = local_rhs_rows,
       .local_rhs_cols = local_rhs_cols,
+      .potrf_workspace_device_bytes = potrf_workspace_device_bytes,
+      .potrf_workspace_host_bytes = potrf_workspace_host_bytes,
+      .potrs_workspace_device_bytes = potrs_workspace_device_bytes,
+      .potrs_workspace_host_bytes = potrs_workspace_host_bytes,
   };
 #endif
 }

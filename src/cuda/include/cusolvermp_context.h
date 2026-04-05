@@ -2,6 +2,7 @@
 #define JAXMG_CUSOLVERMP_CONTEXT_H_
 
 #include <cstdint>
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <vector>
@@ -60,6 +61,10 @@ struct CuSolverMpRuntimeProbeResult
   int64_t local_matrix_cols;
   int64_t local_rhs_rows;
   int64_t local_rhs_cols;
+  size_t potrf_workspace_device_bytes;
+  size_t potrf_workspace_host_bytes;
+  size_t potrs_workspace_device_bytes;
+  size_t potrs_workspace_host_bytes;
 };
 
 CuSolverMpContextPlan BuildCuSolverMpContextPlan();
