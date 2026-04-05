@@ -1,6 +1,9 @@
 from math import isqrt
 from typing import Tuple
 
+import jax.numpy as jnp
+import numpy as np
+
 
 def choose_process_grid(num_devices: int) -> Tuple[int, int]:
     """Choose a square-ish ``(nprow, npcol)`` grid whose product matches ``num_devices``."""
@@ -142,3 +145,98 @@ def process_grid_rank_order(process_grid: Tuple[int, int]) -> Tuple[Tuple[int, i
         linear_rank_to_process_coords(rank, process_grid)
         for rank in range(nprow * npcol)
     )
+
+
+def _owner_coord(
+    global_index: int, block_size: int, nprocs: int, src_proc: int = 0
+) -> int:
+    return (src_proc + global_index // block_size) % nprocs
+
+
+def _local_index(
+    global_index: int,
+    block_size: int,
+    proc_coord: int,
+    nprocs: int,
+    src_proc: int = 0,
+) -> int:
+    if _owner_coord(global_index, block_size, nprocs, src_proc) != proc_coord:
+        raise ValueError("global index is not owned by the requested process.")
+    block_index = global_index // block_size
+    block_offset = (proc_coord - src_proc) % nprocs
+    local_block_index = (block_index - block_offset) // nprocs
+    return local_block_index * block_size + (global_index % block_size)
+
+
+def pack_global_to_local_block_cyclic(
+    a,
+    block_shape: Tuple[int, int],
+    process_grid: Tuple[int, int],
+    process_coords: Tuple[int, int],
+    src_process: Tuple[int, int] = (0, 0),
+):
+    """Pack a global 2D array into one rank's local 2D block-cyclic buffer."""
+    global_array = np.asarray(a)
+    if global_array.ndim != 2:
+        raise ValueError("a must be a 2D array.")
+
+    local_shape = local_block_cyclic_shape(
+        global_array.shape, block_shape, process_grid, process_coords, src_process
+    )
+    local_array = np.zeros(local_shape, dtype=global_array.dtype)
+
+    nrows, ncols = global_array.shape
+    mb, nb = block_shape
+    nprow, npcol = process_grid
+    src_prow, src_pcol = src_process
+    prow, pcol = process_coords
+
+    for row in range(nrows):
+        if _owner_coord(row, mb, nprow, src_prow) != prow:
+            continue
+        local_row = _local_index(row, mb, prow, nprow, src_prow)
+        for col in range(ncols):
+            if _owner_coord(col, nb, npcol, src_pcol) != pcol:
+                continue
+            local_col = _local_index(col, nb, pcol, npcol, src_pcol)
+            local_array[local_row, local_col] = global_array[row, col]
+
+    return jnp.asarray(local_array)
+
+
+def unpack_local_from_block_cyclic(
+    local_array,
+    global_shape: Tuple[int, int],
+    block_shape: Tuple[int, int],
+    process_grid: Tuple[int, int],
+    process_coords: Tuple[int, int],
+    src_process: Tuple[int, int] = (0, 0),
+):
+    """Scatter one rank's local block-cyclic buffer back into a global 2D canvas."""
+    local_np = np.asarray(local_array)
+    expected_local_shape = local_block_cyclic_shape(
+        global_shape, block_shape, process_grid, process_coords, src_process
+    )
+    if local_np.shape != expected_local_shape:
+        raise ValueError(
+            f"local_array shape {local_np.shape} does not match expected {expected_local_shape}."
+        )
+
+    global_array = np.zeros(global_shape, dtype=local_np.dtype)
+    nrows, ncols = global_shape
+    mb, nb = block_shape
+    nprow, npcol = process_grid
+    src_prow, src_pcol = src_process
+    prow, pcol = process_coords
+
+    for row in range(nrows):
+        if _owner_coord(row, mb, nprow, src_prow) != prow:
+            continue
+        local_row = _local_index(row, mb, prow, nprow, src_prow)
+        for col in range(ncols):
+            if _owner_coord(col, nb, npcol, src_pcol) != pcol:
+                continue
+            local_col = _local_index(col, nb, pcol, npcol, src_pcol)
+            global_array[row, col] = local_np[local_row, local_col]
+
+    return jnp.asarray(global_array)

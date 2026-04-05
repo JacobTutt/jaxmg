@@ -88,6 +88,35 @@ def potrs_cusolvermp(
     in_specs: Tuple[P] | List[P] | P,
     pad: bool = True,
     process_grid: Tuple[int, int] | None = None,
+    return_status: bool = False,
+):
+    out_a, out_b, status = _potrs_cusolvermp_raw(
+        a,
+        b,
+        T_A,
+        mesh=mesh,
+        in_specs=in_specs,
+        pad=pad,
+        process_grid=process_grid,
+    )
+    del out_a
+
+    if b.ndim == 1:
+        out_b = jnp.squeeze(out_b, axis=1)
+
+    if return_status:
+        return out_b, status[0]
+    return out_b
+
+
+def _potrs_cusolvermp_raw(
+    a: Array,
+    b: Array,
+    T_A: int,
+    mesh: Mesh,
+    in_specs: Tuple[P] | List[P] | P,
+    pad: bool = True,
+    process_grid: Tuple[int, int] | None = None,
 ):
     """Stub entry seam for the future cuSOLVERMp potrs path.
 

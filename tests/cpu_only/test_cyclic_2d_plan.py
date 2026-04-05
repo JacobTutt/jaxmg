@@ -12,9 +12,11 @@ from jaxmg import (
     normalize_block_shape,
     normalize_process_grid,
     numroc,
+    pack_global_to_local_block_cyclic,
     padded_block_shape,
     plan_cyclic_2d_layout,
     process_grid_rank_order,
+    unpack_local_from_block_cyclic,
 )
 
 
@@ -79,3 +81,34 @@ def test_plan_cyclic_2d_layout_rejects_non_row_sharded_specs():
     a = jnp.eye(4)
     with pytest.raises(ValueError, match="A must be sharded along the rows"):
         plan_cyclic_2d_layout(a, 2, mesh=mesh, in_specs=(P(None, "x"),))
+
+
+def test_pack_global_to_local_block_cyclic_matches_expected_2x2_tiles():
+    a = jnp.arange(1, 17, dtype=jnp.float32).reshape(4, 4)
+    local = pack_global_to_local_block_cyclic(a, (2, 2), (2, 2), (0, 1))
+    expected = jnp.array([[3, 4], [7, 8]], dtype=jnp.float32)
+    assert jnp.array_equal(local, expected)
+
+
+def test_unpack_local_from_block_cyclic_restores_owned_global_entries():
+    a = jnp.arange(1, 17, dtype=jnp.float32).reshape(4, 4)
+    local = pack_global_to_local_block_cyclic(a, (2, 2), (2, 2), (1, 0))
+    restored = unpack_local_from_block_cyclic(local, (4, 4), (2, 2), (2, 2), (1, 0))
+
+    expected = jnp.array(
+        [
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+            [9, 10, 0, 0],
+            [13, 14, 0, 0],
+        ],
+        dtype=jnp.float32,
+    )
+    assert jnp.array_equal(restored, expected)
+
+
+def test_pack_then_unpack_round_trips_single_rank_case():
+    a = jnp.arange(1, 13, dtype=jnp.float32).reshape(3, 4)
+    local = pack_global_to_local_block_cyclic(a, (2, 2), (1, 1), (0, 0))
+    restored = unpack_local_from_block_cyclic(local, a.shape, (2, 2), (1, 1), (0, 0))
+    assert jnp.array_equal(restored, a)

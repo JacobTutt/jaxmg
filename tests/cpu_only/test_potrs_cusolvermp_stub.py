@@ -54,3 +54,45 @@ def test_build_native_stub_attrs_exposes_scalar_context_fields():
     assert attrs["rhs_padded_rows"] == request.context.rhs_padded_shape[0]
     assert attrs["rhs_padded_cols"] == request.context.rhs_padded_shape[1]
     assert "\"operation\":\"potrs\"" in attrs["context_json"]
+
+
+def test_potrs_cusolvermp_matches_potrs_vector_return_contract(monkeypatch):
+    mesh = jax.make_mesh((jax.local_device_count(),), ("x",))
+    a = jnp.eye(4, dtype=jnp.float32)
+    b = jnp.ones((4,), dtype=jnp.float32)
+
+    def fake_raw(*args, **kwargs):
+        del args, kwargs
+        return (
+            a,
+            jnp.array([[1.0], [0.5], [1.0 / 3.0], [0.25]], dtype=jnp.float32),
+            jnp.array([0], dtype=jnp.int32),
+        )
+
+    monkeypatch.setattr("jaxmg._potrs_cusolvermp._potrs_cusolvermp_raw", fake_raw)
+
+    out = potrs_cusolvermp(a, b, 2, mesh=mesh, in_specs=(P("x", None),))
+    assert out.shape == (4,)
+    assert jnp.allclose(out, jnp.array([1.0, 0.5, 1.0 / 3.0, 0.25], dtype=jnp.float32))
+
+
+def test_potrs_cusolvermp_can_return_status(monkeypatch):
+    mesh = jax.make_mesh((jax.local_device_count(),), ("x",))
+    a = jnp.eye(4, dtype=jnp.float32)
+    b = jnp.ones((4, 1), dtype=jnp.float32)
+
+    def fake_raw(*args, **kwargs):
+        del args, kwargs
+        return (
+            a,
+            jnp.array([[1.0], [0.5], [1.0 / 3.0], [0.25]], dtype=jnp.float32),
+            jnp.array([0], dtype=jnp.int32),
+        )
+
+    monkeypatch.setattr("jaxmg._potrs_cusolvermp._potrs_cusolvermp_raw", fake_raw)
+
+    out, status = potrs_cusolvermp(
+        a, b, 2, mesh=mesh, in_specs=(P("x", None),), return_status=True
+    )
+    assert out.shape == (4, 1)
+    assert int(status) == 0

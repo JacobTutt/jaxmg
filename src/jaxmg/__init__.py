@@ -24,7 +24,9 @@ from ._block_cyclic_2d import (
     local_block_cyclic_shape,
     padded_block_shape,
     linear_rank_to_process_coords,
+    pack_global_to_local_block_cyclic,
     process_grid_rank_order,
+    unpack_local_from_block_cyclic,
 )
 from ._cyclic_2d import Cyclic2DPlan, cyclic_2d, plan_cyclic_2d_layout
 from ._distributed_runtime import DistributedRuntimePlan, plan_distributed_runtime
@@ -82,7 +84,9 @@ __all__ = [
     "local_block_cyclic_shape",
     "padded_block_shape",
     "linear_rank_to_process_coords",
+    "pack_global_to_local_block_cyclic",
     "process_grid_rank_order",
+    "unpack_local_from_block_cyclic",
     "Cyclic2DPlan",
     "cyclic_2d",
     "plan_cyclic_2d_layout",
