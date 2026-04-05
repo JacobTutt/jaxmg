@@ -148,16 +148,32 @@ ffi::Error PotrsCuSolverMpDispatch(
   auto out_b_data = static_cast<float *>(out_b->untyped_data());
   auto status_data = status->typed_data();
 
-  FFI_RETURN_IF_ERROR_STATUS(
-      JAX_AS_STATUS(gpuMemcpy(out_a_data, input_a_data, a.size_bytes(),
-                              gpuMemcpyDeviceToDevice)));
-  FFI_RETURN_IF_ERROR_STATUS(
-      JAX_AS_STATUS(gpuMemcpy(out_b_data, probe->solved_rhs.data(),
-                              sizeof(float) * probe->solved_rhs.size(),
-                              gpuMemcpyHostToDevice)));
+  auto copy_status =
+      gpuMemcpy(out_a_data, input_a_data, a.size_bytes(), gpuMemcpyDeviceToDevice);
+  if (copy_status != gpuSuccess)
+  {
+    return ffi::Error::Internal(
+        absl::StrFormat("potrs_cusolvermp failed to copy A to output: gpuMemcpy returned %d",
+                        static_cast<int>(copy_status)));
+  }
+  copy_status = gpuMemcpy(out_b_data, probe->solved_rhs.data(),
+                          sizeof(float) * probe->solved_rhs.size(),
+                          gpuMemcpyHostToDevice);
+  if (copy_status != gpuSuccess)
+  {
+    return ffi::Error::Internal(
+        absl::StrFormat("potrs_cusolvermp failed to copy solution to output: gpuMemcpy returned %d",
+                        static_cast<int>(copy_status)));
+  }
   int32_t status_val = 0;
-  FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(
-      gpuMemcpy(status_data, &status_val, sizeof(status_val), gpuMemcpyHostToDevice)));
+  copy_status =
+      gpuMemcpy(status_data, &status_val, sizeof(status_val), gpuMemcpyHostToDevice);
+  if (copy_status != gpuSuccess)
+  {
+    return ffi::Error::Internal(
+        absl::StrFormat("potrs_cusolvermp failed to copy status to output: gpuMemcpy returned %d",
+                        static_cast<int>(copy_status)));
+  }
 
   return ffi::Error::Success();
 #else
