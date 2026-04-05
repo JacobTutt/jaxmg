@@ -65,6 +65,9 @@ struct CuSolverMpRuntimeProbeResult
   size_t potrf_workspace_host_bytes;
   size_t potrs_workspace_device_bytes;
   size_t potrs_workspace_host_bytes;
+  int potrf_info;
+  int potrs_info;
+  float solution_max_abs_error;
 };
 
 CuSolverMpContextPlan BuildCuSolverMpContextPlan();

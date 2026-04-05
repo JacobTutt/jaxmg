@@ -1,6 +1,8 @@
 #include "include/cusolvermp_context.h"
 
 #include <algorithm>
+#include <cmath>
+#include <vector>
 
 #if defined(JAXMG_HAVE_CUSOLVERMP) && defined(JAXMG_HAVE_NCCL)
 #include <cuda_runtime_api.h>
@@ -152,6 +154,8 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   cusolverMpMatrixDescriptor_t desc_b = nullptr;
   void *d_a = nullptr;
   void *d_b = nullptr;
+  void *d_work = nullptr;
+  int *d_info = nullptr;
 
   cudaError_t cuda_status = cudaSetDevice(spec.local_device_index);
   if (cuda_status != cudaSuccess)
@@ -332,10 +336,243 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
                 cusolver_error_string(cusolver_status));
   }
 
+  std::vector<float> host_a(
+      static_cast<size_t>(std::max<int64_t>(1, local_matrix_rows) *
+                          std::max<int64_t>(1, local_matrix_cols)),
+      0.0f);
+  std::vector<float> host_b(
+      static_cast<size_t>(std::max<int64_t>(1, local_rhs_rows) *
+                          std::max<int64_t>(1, local_rhs_cols)),
+      1.0f);
+  for (int64_t i = 0; i < std::min(local_matrix_rows, local_matrix_cols); ++i)
+  {
+    host_a[static_cast<size_t>(i + i * local_matrix_rows)] =
+        static_cast<float>(i + 1);
+  }
+
+  cuda_status = cudaMemcpy(d_a, host_a.data(), matrix_bytes, cudaMemcpyHostToDevice);
+  if (cuda_status != cudaSuccess)
+  {
+    cudaFree(d_b);
+    cudaFree(d_a);
+    cusolverMpDestroyMatrixDesc(desc_b);
+    cusolverMpDestroyMatrixDesc(desc_a);
+    cusolverMpDestroyGrid(grid);
+    cusolverMpDestroy(handle);
+    cudaStreamDestroy(stream);
+    ncclCommDestroy(comm);
+    return fail("cudaMemcpy(A) failed: " + cuda_error_string(cuda_status));
+  }
+
+  cuda_status = cudaMemcpy(d_b, host_b.data(), rhs_bytes, cudaMemcpyHostToDevice);
+  if (cuda_status != cudaSuccess)
+  {
+    cudaFree(d_b);
+    cudaFree(d_a);
+    cusolverMpDestroyMatrixDesc(desc_b);
+    cusolverMpDestroyMatrixDesc(desc_a);
+    cusolverMpDestroyGrid(grid);
+    cusolverMpDestroy(handle);
+    cudaStreamDestroy(stream);
+    ncclCommDestroy(comm);
+    return fail("cudaMemcpy(B) failed: " + cuda_error_string(cuda_status));
+  }
+
+  size_t work_bytes = std::max(potrf_workspace_device_bytes, potrs_workspace_device_bytes);
+  if (work_bytes > 0)
+  {
+    cuda_status = cudaMalloc(&d_work, work_bytes);
+    if (cuda_status != cudaSuccess)
+    {
+      cudaFree(d_b);
+      cudaFree(d_a);
+      cusolverMpDestroyMatrixDesc(desc_b);
+      cusolverMpDestroyMatrixDesc(desc_a);
+      cusolverMpDestroyGrid(grid);
+      cusolverMpDestroy(handle);
+      cudaStreamDestroy(stream);
+      ncclCommDestroy(comm);
+      return fail("cudaMalloc(workspace) failed: " + cuda_error_string(cuda_status));
+    }
+  }
+
+  size_t host_work_bytes = std::max(potrf_workspace_host_bytes, potrs_workspace_host_bytes);
+  std::vector<char> h_work(host_work_bytes);
+
+  cuda_status = cudaMalloc(reinterpret_cast<void **>(&d_info), sizeof(int));
+  if (cuda_status != cudaSuccess)
+  {
+    if (d_work != nullptr)
+    {
+      cudaFree(d_work);
+    }
+    cudaFree(d_b);
+    cudaFree(d_a);
+    cusolverMpDestroyMatrixDesc(desc_b);
+    cusolverMpDestroyMatrixDesc(desc_a);
+    cusolverMpDestroyGrid(grid);
+    cusolverMpDestroy(handle);
+    cudaStreamDestroy(stream);
+    ncclCommDestroy(comm);
+    return fail("cudaMalloc(info) failed: " + cuda_error_string(cuda_status));
+  }
+
+  cusolver_status = cusolverMpPotrf(
+      handle, CUBLAS_FILL_MODE_LOWER, problem.matrix_rows, d_a, 1, 1, desc_a,
+      CUDA_R_32F, d_work, potrf_workspace_device_bytes,
+      h_work.empty() ? nullptr : h_work.data(), potrf_workspace_host_bytes, d_info);
+  if (cusolver_status != CUSOLVER_STATUS_SUCCESS)
+  {
+    cudaFree(d_info);
+    if (d_work != nullptr)
+    {
+      cudaFree(d_work);
+    }
+    cudaFree(d_b);
+    cudaFree(d_a);
+    cusolverMpDestroyMatrixDesc(desc_b);
+    cusolverMpDestroyMatrixDesc(desc_a);
+    cusolverMpDestroyGrid(grid);
+    cusolverMpDestroy(handle);
+    cudaStreamDestroy(stream);
+    ncclCommDestroy(comm);
+    return fail("cusolverMpPotrf failed with status " +
+                cusolver_error_string(cusolver_status));
+  }
+
+  int potrf_info = 0;
+  cuda_status = cudaMemcpy(&potrf_info, d_info, sizeof(int), cudaMemcpyDeviceToHost);
+  if (cuda_status != cudaSuccess)
+  {
+    cudaFree(d_info);
+    if (d_work != nullptr)
+    {
+      cudaFree(d_work);
+    }
+    cudaFree(d_b);
+    cudaFree(d_a);
+    cusolverMpDestroyMatrixDesc(desc_b);
+    cusolverMpDestroyMatrixDesc(desc_a);
+    cusolverMpDestroyGrid(grid);
+    cusolverMpDestroy(handle);
+    cudaStreamDestroy(stream);
+    ncclCommDestroy(comm);
+    return fail("cudaMemcpy(potrf info) failed: " + cuda_error_string(cuda_status));
+  }
+  if (potrf_info != 0)
+  {
+    cudaFree(d_info);
+    if (d_work != nullptr)
+    {
+      cudaFree(d_work);
+    }
+    cudaFree(d_b);
+    cudaFree(d_a);
+    cusolverMpDestroyMatrixDesc(desc_b);
+    cusolverMpDestroyMatrixDesc(desc_a);
+    cusolverMpDestroyGrid(grid);
+    cusolverMpDestroy(handle);
+    cudaStreamDestroy(stream);
+    ncclCommDestroy(comm);
+    return fail("cusolverMpPotrf completed with info=" + std::to_string(potrf_info));
+  }
+
+  cusolver_status = cusolverMpPotrs(
+      handle, CUBLAS_FILL_MODE_LOWER, problem.matrix_rows, problem.rhs_cols, d_a,
+      1, 1, desc_a, d_b, 1, 1, desc_b, CUDA_R_32F, d_work,
+      potrs_workspace_device_bytes, h_work.empty() ? nullptr : h_work.data(),
+      potrs_workspace_host_bytes, d_info);
+  if (cusolver_status != CUSOLVER_STATUS_SUCCESS)
+  {
+    cudaFree(d_info);
+    if (d_work != nullptr)
+    {
+      cudaFree(d_work);
+    }
+    cudaFree(d_b);
+    cudaFree(d_a);
+    cusolverMpDestroyMatrixDesc(desc_b);
+    cusolverMpDestroyMatrixDesc(desc_a);
+    cusolverMpDestroyGrid(grid);
+    cusolverMpDestroy(handle);
+    cudaStreamDestroy(stream);
+    ncclCommDestroy(comm);
+    return fail("cusolverMpPotrs failed with status " +
+                cusolver_error_string(cusolver_status));
+  }
+
+  int potrs_info = 0;
+  cuda_status = cudaMemcpy(&potrs_info, d_info, sizeof(int), cudaMemcpyDeviceToHost);
+  if (cuda_status != cudaSuccess)
+  {
+    cudaFree(d_info);
+    if (d_work != nullptr)
+    {
+      cudaFree(d_work);
+    }
+    cudaFree(d_b);
+    cudaFree(d_a);
+    cusolverMpDestroyMatrixDesc(desc_b);
+    cusolverMpDestroyMatrixDesc(desc_a);
+    cusolverMpDestroyGrid(grid);
+    cusolverMpDestroy(handle);
+    cudaStreamDestroy(stream);
+    ncclCommDestroy(comm);
+    return fail("cudaMemcpy(potrs info) failed: " + cuda_error_string(cuda_status));
+  }
+  if (potrs_info != 0)
+  {
+    cudaFree(d_info);
+    if (d_work != nullptr)
+    {
+      cudaFree(d_work);
+    }
+    cudaFree(d_b);
+    cudaFree(d_a);
+    cusolverMpDestroyMatrixDesc(desc_b);
+    cusolverMpDestroyMatrixDesc(desc_a);
+    cusolverMpDestroyGrid(grid);
+    cusolverMpDestroy(handle);
+    cudaStreamDestroy(stream);
+    ncclCommDestroy(comm);
+    return fail("cusolverMpPotrs completed with info=" + std::to_string(potrs_info));
+  }
+
+  cuda_status = cudaMemcpy(host_b.data(), d_b, rhs_bytes, cudaMemcpyDeviceToHost);
+  if (cuda_status != cudaSuccess)
+  {
+    cudaFree(d_info);
+    if (d_work != nullptr)
+    {
+      cudaFree(d_work);
+    }
+    cudaFree(d_b);
+    cudaFree(d_a);
+    cusolverMpDestroyMatrixDesc(desc_b);
+    cusolverMpDestroyMatrixDesc(desc_a);
+    cusolverMpDestroyGrid(grid);
+    cusolverMpDestroy(handle);
+    cudaStreamDestroy(stream);
+    ncclCommDestroy(comm);
+    return fail("cudaMemcpy(solution) failed: " + cuda_error_string(cuda_status));
+  }
+
+  float max_abs_error = 0.0f;
+  for (int64_t i = 0; i < local_rhs_rows; ++i)
+  {
+    float expected = 1.0f / static_cast<float>(i + 1);
+    max_abs_error = std::max(max_abs_error, std::fabs(host_b[static_cast<size_t>(i)] - expected));
+  }
+
   int nccl_version = 0;
   nccl_status = ncclGetVersion(&nccl_version);
   if (nccl_status != ncclSuccess)
   {
+    cudaFree(d_info);
+    if (d_work != nullptr)
+    {
+      cudaFree(d_work);
+    }
     cudaFree(d_b);
     cudaFree(d_a);
     cusolverMpDestroyMatrixDesc(desc_b);
@@ -347,6 +584,11 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     return fail("ncclGetVersion failed: " + nccl_error_string(nccl_status));
   }
 
+  cudaFree(d_info);
+  if (d_work != nullptr)
+  {
+    cudaFree(d_work);
+  }
   cudaFree(d_b);
   cudaFree(d_a);
   cusolverMpDestroyMatrixDesc(desc_b);
@@ -368,6 +610,9 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
       .potrf_workspace_host_bytes = potrf_workspace_host_bytes,
       .potrs_workspace_device_bytes = potrs_workspace_device_bytes,
       .potrs_workspace_host_bytes = potrs_workspace_host_bytes,
+      .potrf_info = potrf_info,
+      .potrs_info = potrs_info,
+      .solution_max_abs_error = max_abs_error,
   };
 #endif
 }
