@@ -1,5 +1,7 @@
 #include "include/cusolvermp_context.h"
 
+#include <algorithm>
+
 #if defined(JAXMG_HAVE_CUSOLVERMP) && defined(JAXMG_HAVE_NCCL)
 #include <cuda_runtime_api.h>
 #include <cusolverMp.h>
@@ -102,7 +104,8 @@ std::vector<std::string> CuSolverMpPotrsStubContractIssues(
 }
 
 std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
-    const CuSolverMpContextSpec &spec, std::string *error_message)
+    const CuSolverMpContextSpec &spec, const CuSolverMpPotrsProblemSpec &problem,
+    std::string *error_message)
 {
 #if !(defined(JAXMG_HAVE_CUSOLVERMP) && defined(JAXMG_HAVE_NCCL))
   if (error_message != nullptr)
@@ -145,6 +148,8 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   ncclComm_t comm = nullptr;
   cusolverMpHandle_t handle = nullptr;
   cusolverMpGrid_t grid = nullptr;
+  cusolverMpMatrixDescriptor_t desc_a = nullptr;
+  cusolverMpMatrixDescriptor_t desc_b = nullptr;
 
   cudaError_t cuda_status = cudaSetDevice(spec.local_device_index);
   if (cuda_status != cudaSuccess)
@@ -211,10 +216,56 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
                 cusolver_error_string(cusolver_status));
   }
 
+  int process_row = spec.process_rank % spec.process_grid.nprow;
+  int process_col = spec.process_rank / spec.process_grid.nprow;
+  int64_t local_matrix_rows = cusolverMpNUMROC(
+      problem.matrix_rows, problem.matrix_block_rows, process_row, 0,
+      spec.process_grid.nprow);
+  int64_t local_matrix_cols = cusolverMpNUMROC(
+      problem.matrix_cols, problem.matrix_block_cols, process_col, 0,
+      spec.process_grid.npcol);
+  int64_t local_rhs_rows = cusolverMpNUMROC(
+      problem.rhs_rows, problem.rhs_block_rows, process_row, 0,
+      spec.process_grid.nprow);
+  int64_t local_rhs_cols = cusolverMpNUMROC(
+      problem.rhs_cols, problem.rhs_block_cols, process_col, 0,
+      spec.process_grid.npcol);
+
+  cusolver_status = cusolverMpCreateMatrixDesc(
+      &desc_a, grid, CUDA_R_32F, problem.matrix_rows, problem.matrix_cols,
+      problem.matrix_block_rows, problem.matrix_block_cols, 0, 0,
+      std::max<int64_t>(1, local_matrix_rows));
+  if (cusolver_status != CUSOLVER_STATUS_SUCCESS)
+  {
+    cusolverMpDestroyGrid(grid);
+    cusolverMpDestroy(handle);
+    cudaStreamDestroy(stream);
+    ncclCommDestroy(comm);
+    return fail("cusolverMpCreateMatrixDesc(A) failed with status " +
+                cusolver_error_string(cusolver_status));
+  }
+
+  cusolver_status = cusolverMpCreateMatrixDesc(
+      &desc_b, grid, CUDA_R_32F, problem.rhs_rows, problem.rhs_cols,
+      problem.rhs_block_rows, problem.rhs_block_cols, 0, 0,
+      std::max<int64_t>(1, local_rhs_rows));
+  if (cusolver_status != CUSOLVER_STATUS_SUCCESS)
+  {
+    cusolverMpDestroyMatrixDesc(desc_a);
+    cusolverMpDestroyGrid(grid);
+    cusolverMpDestroy(handle);
+    cudaStreamDestroy(stream);
+    ncclCommDestroy(comm);
+    return fail("cusolverMpCreateMatrixDesc(B) failed with status " +
+                cusolver_error_string(cusolver_status));
+  }
+
   int nccl_version = 0;
   nccl_status = ncclGetVersion(&nccl_version);
   if (nccl_status != ncclSuccess)
   {
+    cusolverMpDestroyMatrixDesc(desc_b);
+    cusolverMpDestroyMatrixDesc(desc_a);
     cusolverMpDestroyGrid(grid);
     cusolverMpDestroy(handle);
     cudaStreamDestroy(stream);
@@ -222,6 +273,8 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     return fail("ncclGetVersion failed: " + nccl_error_string(nccl_status));
   }
 
+  cusolverMpDestroyMatrixDesc(desc_b);
+  cusolverMpDestroyMatrixDesc(desc_a);
   cusolverMpDestroyGrid(grid);
   cusolverMpDestroy(handle);
   cudaStreamDestroy(stream);
@@ -231,6 +284,10 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
       .cuda_device_id = device_id,
       .nccl_version = nccl_version,
       .cusolvermp_version = cusolvermp_version,
+      .local_matrix_rows = local_matrix_rows,
+      .local_matrix_cols = local_matrix_cols,
+      .local_rhs_rows = local_rhs_rows,
+      .local_rhs_cols = local_rhs_cols,
   };
 #endif
 }

@@ -31,8 +31,12 @@ struct CuSolverMpPotrsStubAttrs
   int64_t process_grid_npcol;
   int64_t matrix_block_rows;
   int64_t matrix_block_cols;
+  int64_t matrix_padded_rows;
+  int64_t matrix_padded_cols;
   int64_t rhs_block_rows;
   int64_t rhs_block_cols;
+  int64_t rhs_padded_rows;
+  int64_t rhs_padded_cols;
 };
 
 } // namespace JAX_GPU_NAMESPACE
@@ -51,8 +55,12 @@ XLA_FFI_REGISTER_STRUCT_ATTR_DECODING(
     StructMember<int64_t>("process_grid_npcol"),
     StructMember<int64_t>("matrix_block_rows"),
     StructMember<int64_t>("matrix_block_cols"),
+    StructMember<int64_t>("matrix_padded_rows"),
+    StructMember<int64_t>("matrix_padded_cols"),
     StructMember<int64_t>("rhs_block_rows"),
-    StructMember<int64_t>("rhs_block_cols"));
+    StructMember<int64_t>("rhs_block_cols"),
+    StructMember<int64_t>("rhs_padded_rows"),
+    StructMember<int64_t>("rhs_padded_cols"));
 
 namespace jax
 {
@@ -109,9 +117,20 @@ ffi::Error PotrsCuSolverMpDispatch(
           ? std::string(attrs.context_json)
           : absl::StrFormat("%s...", attrs.context_json.substr(0, kPreviewChars));
 
+  jaxmg::CuSolverMpPotrsProblemSpec problem{
+      .matrix_rows = attrs.matrix_padded_rows,
+      .matrix_cols = attrs.matrix_padded_cols,
+      .rhs_rows = attrs.rhs_padded_rows,
+      .rhs_cols = attrs.rhs_padded_cols,
+      .matrix_block_rows = attrs.matrix_block_rows,
+      .matrix_block_cols = attrs.matrix_block_cols,
+      .rhs_block_rows = attrs.rhs_block_rows,
+      .rhs_block_cols = attrs.rhs_block_cols,
+  };
+
 #if defined(JAXMG_HAVE_CUSOLVERMP) && defined(JAXMG_HAVE_NCCL)
   std::string probe_error;
-  auto probe = jaxmg::ProbeCuSolverMpRuntime(spec, &probe_error);
+  auto probe = jaxmg::ProbeCuSolverMpRuntime(spec, problem, &probe_error);
   if (!probe.has_value())
   {
     return ffi::Error::InvalidArgument(
@@ -126,8 +145,9 @@ ffi::Error PotrsCuSolverMpDispatch(
           "potrs_cusolvermp reached native code and completed a real "
           "cuSOLVERMp runtime probe with device=%d, nccl_version=%d, "
           "cusolvermp_version=%d, T_A=%d, rank=%d/%d, process_grid=(%d,%d), "
-          "matrix_block=(%d,%d), rhs_block=(%d,%d), context_json=%s, but the "
-          "solver execution path is not implemented yet.",
+          "matrix_block=(%d,%d), rhs_block=(%d,%d), local_matrix=(%d,%d), "
+          "local_rhs=(%d,%d), context_json=%s, but the solver execution path "
+          "is not implemented yet.",
           probe->cuda_device_id, probe->nccl_version, probe->cusolvermp_version,
           static_cast<int>(attrs.tile_size), static_cast<int>(attrs.process_rank),
           static_cast<int>(attrs.process_count),
@@ -136,7 +156,9 @@ ffi::Error PotrsCuSolverMpDispatch(
           static_cast<int>(attrs.matrix_block_rows),
           static_cast<int>(attrs.matrix_block_cols),
           static_cast<int>(attrs.rhs_block_rows),
-          static_cast<int>(attrs.rhs_block_cols), preview));
+          static_cast<int>(attrs.rhs_block_cols), probe->local_matrix_rows,
+          probe->local_matrix_cols, probe->local_rhs_rows, probe->local_rhs_cols,
+          preview));
 #else
   return ffi::Error::InvalidArgument(
       absl::StrFormat(
