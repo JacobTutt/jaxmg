@@ -9,6 +9,7 @@
 #include "jaxlib/gpu/vendor.h"
 // JAXMg
 #include "include/cusolvermp_context.h"
+#include "utils/jax_utils.h"
 // XLA
 #include "xla/ffi/api/ffi.h"
 
