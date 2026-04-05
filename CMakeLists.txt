@@ -352,6 +352,7 @@ target_link_libraries(potrs_cusolvermp
     absl::status
     absl::statusor
     CUDA::cudart
+    CUDA::cuda_driver
     CUDA::cupti
 )
 if(HAVE_CUSOLVERMP)
@@ -402,6 +403,7 @@ target_link_libraries(syevd_cusolvermp
     absl::status
     absl::statusor
     CUDA::cudart
+    CUDA::cuda_driver
     CUDA::cupti
 )
 if(HAVE_CUSOLVERMP)
