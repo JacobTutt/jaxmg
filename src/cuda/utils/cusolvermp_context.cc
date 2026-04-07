@@ -425,6 +425,52 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
                 cusolver_error_string(cusolver_status));
   }
 
+  if (spec.process_count > 1)
+  {
+    int nccl_version = 0;
+    nccl_status = ncclGetVersion(&nccl_version);
+    if (nccl_status != ncclSuccess)
+    {
+      cudaFree(d_b);
+      cudaFree(d_a);
+      cusolverMpDestroyMatrixDesc(desc_b);
+      cusolverMpDestroyMatrixDesc(desc_a);
+      cusolverMpDestroyGrid(grid);
+      cusolverMpDestroy(handle);
+      cudaStreamDestroy(stream);
+      ncclCommDestroy(comm);
+      return fail("ncclGetVersion failed: " + nccl_error_string(nccl_status));
+    }
+
+    cudaFree(d_b);
+    cudaFree(d_a);
+    cusolverMpDestroyMatrixDesc(desc_b);
+    cusolverMpDestroyMatrixDesc(desc_a);
+    cusolverMpDestroyGrid(grid);
+    cusolverMpDestroy(handle);
+    cudaStreamDestroy(stream);
+    ncclCommDestroy(comm);
+
+    return CuSolverMpRuntimeProbeResult{
+        .cuda_device_id = device_id,
+        .nccl_version = nccl_version,
+        .cusolvermp_version = cusolvermp_version,
+        .local_matrix_rows = local_matrix_rows,
+        .local_matrix_cols = local_matrix_cols,
+        .local_rhs_rows = local_rhs_rows,
+        .local_rhs_cols = local_rhs_cols,
+        .potrf_workspace_device_bytes = potrf_workspace_device_bytes,
+        .potrf_workspace_host_bytes = potrf_workspace_host_bytes,
+        .potrs_workspace_device_bytes = potrs_workspace_device_bytes,
+        .potrs_workspace_host_bytes = potrs_workspace_host_bytes,
+        .potrf_info = 0,
+        .potrs_info = 0,
+        .solution_max_abs_error = 0.0f,
+        .residual_max_abs_error = 0.0f,
+        .solved_rhs = {},
+    };
+  }
+
   std::vector<float> host_a(
       static_cast<size_t>(std::max<int64_t>(1, local_matrix_rows) *
                           std::max<int64_t>(1, local_matrix_cols)),
