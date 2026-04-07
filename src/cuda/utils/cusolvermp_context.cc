@@ -388,7 +388,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
 
   size_t potrf_workspace_device_bytes = 0;
   size_t potrf_workspace_host_bytes = 0;
-  constexpr int64_t kSubmatrixStart = 0;
+  constexpr int64_t kSubmatrixStart = 1;
   cusolver_status = cusolverMpPotrf_bufferSize(
       handle, CUBLAS_FILL_MODE_LOWER, problem.matrix_rows, d_a, kSubmatrixStart,
       kSubmatrixStart, desc_a, CUDA_R_32F, &potrf_workspace_device_bytes,
