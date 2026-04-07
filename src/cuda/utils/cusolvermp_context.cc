@@ -425,52 +425,6 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
                 cusolver_error_string(cusolver_status));
   }
 
-  if (spec.process_count > 1)
-  {
-    int nccl_version = 0;
-    nccl_status = ncclGetVersion(&nccl_version);
-    if (nccl_status != ncclSuccess)
-    {
-      cudaFree(d_b);
-      cudaFree(d_a);
-      cusolverMpDestroyMatrixDesc(desc_b);
-      cusolverMpDestroyMatrixDesc(desc_a);
-      cusolverMpDestroyGrid(grid);
-      cusolverMpDestroy(handle);
-      cudaStreamDestroy(stream);
-      ncclCommDestroy(comm);
-      return fail("ncclGetVersion failed: " + nccl_error_string(nccl_status));
-    }
-
-    cudaFree(d_b);
-    cudaFree(d_a);
-    cusolverMpDestroyMatrixDesc(desc_b);
-    cusolverMpDestroyMatrixDesc(desc_a);
-    cusolverMpDestroyGrid(grid);
-    cusolverMpDestroy(handle);
-    cudaStreamDestroy(stream);
-    ncclCommDestroy(comm);
-
-    return CuSolverMpRuntimeProbeResult{
-        .cuda_device_id = device_id,
-        .nccl_version = nccl_version,
-        .cusolvermp_version = cusolvermp_version,
-        .local_matrix_rows = local_matrix_rows,
-        .local_matrix_cols = local_matrix_cols,
-        .local_rhs_rows = local_rhs_rows,
-        .local_rhs_cols = local_rhs_cols,
-        .potrf_workspace_device_bytes = potrf_workspace_device_bytes,
-        .potrf_workspace_host_bytes = potrf_workspace_host_bytes,
-        .potrs_workspace_device_bytes = potrs_workspace_device_bytes,
-        .potrs_workspace_host_bytes = potrs_workspace_host_bytes,
-        .potrf_info = 0,
-        .potrs_info = 0,
-        .solution_max_abs_error = 0.0f,
-        .residual_max_abs_error = 0.0f,
-        .solved_rhs = {},
-    };
-  }
-
   std::vector<float> host_a(
       static_cast<size_t>(std::max<int64_t>(1, local_matrix_rows) *
                           std::max<int64_t>(1, local_matrix_cols)),
@@ -481,8 +435,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
       1.0f);
   std::vector<float> host_input_a_rowmajor;
   std::vector<float> host_input_b;
-  bool use_input_buffers =
-      spec.process_count == 1 && input_a != nullptr && input_b != nullptr;
+  bool use_input_buffers = input_a != nullptr && input_b != nullptr;
   if (use_input_buffers)
   {
     host_input_a_rowmajor.resize(static_cast<size_t>(problem.matrix_rows * problem.matrix_cols));
@@ -522,13 +475,49 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
 
     for (int64_t col = 0; col < problem.matrix_cols; ++col)
     {
+      if (OwnerCoord(col, problem.matrix_block_cols, spec.process_grid.npcol) !=
+          process_col)
+      {
+        continue;
+      }
+      int local_col = LocalIndexFromGlobal(
+          col, problem.matrix_block_cols, process_col, spec.process_grid.npcol);
       for (int64_t row = 0; row < problem.matrix_rows; ++row)
       {
-        host_a[static_cast<size_t>(row + col * local_matrix_rows)] =
+        if (OwnerCoord(row, problem.matrix_block_rows, spec.process_grid.nprow) !=
+            process_row)
+        {
+          continue;
+        }
+        int local_row = LocalIndexFromGlobal(
+            row, problem.matrix_block_rows, process_row, spec.process_grid.nprow);
+        host_a[static_cast<size_t>(local_row + local_col * local_matrix_rows)] =
             host_input_a_rowmajor[static_cast<size_t>(row * problem.matrix_cols + col)];
       }
     }
-    std::copy(host_input_b.begin(), host_input_b.end(), host_b.begin());
+
+    for (int64_t col = 0; col < problem.rhs_cols; ++col)
+    {
+      if (OwnerCoord(col, problem.rhs_block_cols, spec.process_grid.npcol) !=
+          process_col)
+      {
+        continue;
+      }
+      int local_col = LocalIndexFromGlobal(
+          col, problem.rhs_block_cols, process_col, spec.process_grid.npcol);
+      for (int64_t row = 0; row < problem.rhs_rows; ++row)
+      {
+        if (OwnerCoord(row, problem.rhs_block_rows, spec.process_grid.nprow) !=
+            process_row)
+        {
+          continue;
+        }
+        int local_row = LocalIndexFromGlobal(
+            row, problem.rhs_block_rows, process_row, spec.process_grid.nprow);
+        host_b[static_cast<size_t>(local_row + local_col * local_rhs_rows)] =
+            host_input_b[static_cast<size_t>(row * problem.rhs_cols + col)];
+      }
+    }
   }
   else
   {
