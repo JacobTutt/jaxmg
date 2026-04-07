@@ -388,9 +388,11 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
 
   size_t potrf_workspace_device_bytes = 0;
   size_t potrf_workspace_host_bytes = 0;
+  constexpr int64_t kSubmatrixStart = 0;
   cusolver_status = cusolverMpPotrf_bufferSize(
-      handle, CUBLAS_FILL_MODE_LOWER, problem.matrix_rows, d_a, 1, 1, desc_a,
-      CUDA_R_32F, &potrf_workspace_device_bytes, &potrf_workspace_host_bytes);
+      handle, CUBLAS_FILL_MODE_LOWER, problem.matrix_rows, d_a, kSubmatrixStart,
+      kSubmatrixStart, desc_a, CUDA_R_32F, &potrf_workspace_device_bytes,
+      &potrf_workspace_host_bytes);
   if (cusolver_status != CUSOLVER_STATUS_SUCCESS)
   {
     cudaFree(d_b);
@@ -409,8 +411,9 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   size_t potrs_workspace_host_bytes = 0;
   cusolver_status = cusolverMpPotrs_bufferSize(
       handle, CUBLAS_FILL_MODE_LOWER, problem.matrix_rows, problem.rhs_cols,
-      d_a, 1, 1, desc_a, d_b, 1, 1, desc_b, CUDA_R_32F,
-      &potrs_workspace_device_bytes, &potrs_workspace_host_bytes);
+      d_a, kSubmatrixStart, kSubmatrixStart, desc_a, d_b, kSubmatrixStart,
+      kSubmatrixStart, desc_b, CUDA_R_32F, &potrs_workspace_device_bytes,
+      &potrs_workspace_host_bytes);
   if (cusolver_status != CUSOLVER_STATUS_SUCCESS)
   {
     cudaFree(d_b);
@@ -624,8 +627,8 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   }
 
   cusolver_status = cusolverMpPotrf(
-      handle, CUBLAS_FILL_MODE_LOWER, problem.matrix_rows, d_a, 1, 1, desc_a,
-      CUDA_R_32F, d_work, potrf_workspace_device_bytes,
+      handle, CUBLAS_FILL_MODE_LOWER, problem.matrix_rows, d_a, kSubmatrixStart,
+      kSubmatrixStart, desc_a, CUDA_R_32F, d_work, potrf_workspace_device_bytes,
       h_work.empty() ? nullptr : h_work.data(), potrf_workspace_host_bytes, d_info);
   if (cusolver_status != CUSOLVER_STATUS_SUCCESS)
   {
@@ -685,9 +688,9 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
 
   cusolver_status = cusolverMpPotrs(
       handle, CUBLAS_FILL_MODE_LOWER, problem.matrix_rows, problem.rhs_cols, d_a,
-      1, 1, desc_a, d_b, 1, 1, desc_b, CUDA_R_32F, d_work,
-      potrs_workspace_device_bytes, h_work.empty() ? nullptr : h_work.data(),
-      potrs_workspace_host_bytes, d_info);
+      kSubmatrixStart, kSubmatrixStart, desc_a, d_b, kSubmatrixStart,
+      kSubmatrixStart, desc_b, CUDA_R_32F, d_work, potrs_workspace_device_bytes,
+      h_work.empty() ? nullptr : h_work.data(), potrs_workspace_host_bytes, d_info);
   if (cusolver_status != CUSOLVER_STATUS_SUCCESS)
   {
     cudaFree(d_info);
