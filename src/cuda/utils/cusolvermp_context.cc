@@ -522,8 +522,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
 
       cusolver_status = cusolverMpMatrixScatterH2D(
           handle, problem.matrix_rows, problem.matrix_cols, d_a, kSubmatrixStart,
-          kSubmatrixStart, desc_a, 0,
-          spec.process_rank == 0 ? host_input_a_colmajor.data() : nullptr,
+          kSubmatrixStart, desc_a, 0, host_input_a_colmajor.data(),
           problem.matrix_rows);
       if (cusolver_status != CUSOLVER_STATUS_SUCCESS)
       {
@@ -542,8 +541,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
 
       cusolver_status = cusolverMpMatrixScatterH2D(
           handle, problem.rhs_rows, problem.rhs_cols, d_b, kSubmatrixStart,
-          kSubmatrixStart, desc_b, 0,
-          spec.process_rank == 0 ? host_input_b.data() : nullptr,
+          kSubmatrixStart, desc_b, 0, host_input_b.data(),
           problem.rhs_rows);
       if (cusolver_status != CUSOLVER_STATUS_SUCCESS)
       {
