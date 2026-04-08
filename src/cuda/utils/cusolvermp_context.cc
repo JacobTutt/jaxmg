@@ -54,6 +54,12 @@ bool EnvFlagEnabled(const char *name)
   return std::string(value) != "0";
 }
 
+bool StopAtStage(const char *stage)
+{
+  const char *value = std::getenv("JAXMG_CUSOLVERMP_STOP_STAGE");
+  return value != nullptr && std::string(value) == stage;
+}
+
 #if defined(JAXMG_HAVE_CUSOLVERMP) && defined(JAXMG_HAVE_NCCL)
 bool WriteNcclUniqueId(const std::string &path, const ncclUniqueId &comm_id)
 {
@@ -262,8 +268,8 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     return std::to_string(static_cast<int>(status));
   };
   auto debug_log = [&spec](const char *stage) {
-    std::fprintf(stdout, "rank=%d stage=%s\n", spec.process_rank, stage);
-    std::fflush(stdout);
+    std::fprintf(stderr, "rank=%d stage=%s\n", spec.process_rank, stage);
+    std::fflush(stderr);
   };
 
   cudaStream_t stream = nullptr;
@@ -477,6 +483,11 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     return fail("cusolverMpPotrs_bufferSize failed with status " +
                 cusolver_error_string(cusolver_status));
   }
+  debug_log("after_workspace_queries");
+  if (StopAtStage("after_workspace_queries"))
+  {
+    return fail("stopped after workspace queries");
+  }
 
   std::vector<float> host_a(
       static_cast<size_t>(std::max<int64_t>(1, local_matrix_rows) *
@@ -625,6 +636,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   }
   else
   {
+    debug_log("before_synthetic_local_build");
     for (int64_t global_i = 0;
          global_i < std::min(problem.matrix_rows, problem.matrix_cols); ++global_i)
     {
@@ -657,6 +669,11 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
             global_i, problem.rhs_block_rows, process_row, spec.process_grid.nprow);
         host_b[static_cast<size_t>(local_row)] = 1.0f;
       }
+    }
+    debug_log("after_synthetic_local_build");
+    if (StopAtStage("after_synthetic_local_build"))
+    {
+      return fail("stopped after synthetic local build");
     }
   }
 
@@ -691,6 +708,10 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
       return fail("cudaMemcpy(B) failed: " + cuda_error_string(cuda_status));
     }
     debug_log("after_cudaMemcpy_local_buffers");
+    if (StopAtStage("after_device_buffer_copies"))
+    {
+      return fail("stopped after device buffer copies");
+    }
   }
 
   size_t work_bytes = std::max(potrf_workspace_device_bytes, potrs_workspace_device_bytes);
