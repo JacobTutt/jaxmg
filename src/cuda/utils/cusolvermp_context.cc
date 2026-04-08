@@ -43,6 +43,16 @@ std::string ResolveNcclBootstrapPath(const CuSolverMpContextSpec &spec)
          std::to_string(spec.process_count) + ".bin";
 }
 
+bool EnvFlagEnabled(const char *name)
+{
+  const char *value = std::getenv(name);
+  if (value == nullptr || value[0] == '\0')
+  {
+    return false;
+  }
+  return std::string(value) != "0";
+}
+
 #if defined(JAXMG_HAVE_CUSOLVERMP) && defined(JAXMG_HAVE_NCCL)
 bool WriteNcclUniqueId(const std::string &path, const ncclUniqueId &comm_id)
 {
@@ -473,7 +483,8 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
       1.0f);
   std::vector<float> host_input_a_rowmajor;
   std::vector<float> host_input_b;
-  bool use_input_buffers = input_a != nullptr && input_b != nullptr;
+  bool use_input_buffers = input_a != nullptr && input_b != nullptr &&
+                           !EnvFlagEnabled("JAXMG_CUSOLVERMP_USE_SYNTHETIC_LOCAL");
   std::string debug_prefix = MultiRankDebugPrefix(
       spec, problem, local_matrix_rows, local_matrix_cols, local_rhs_rows,
       local_rhs_cols, use_input_buffers);
