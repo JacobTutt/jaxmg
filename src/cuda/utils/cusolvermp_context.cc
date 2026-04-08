@@ -488,6 +488,16 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   {
     return fail("stopped after workspace queries");
   }
+  {
+    std::ostringstream size_stage;
+    size_stage << "local_sizes_A_" << local_matrix_rows << "x" << local_matrix_cols
+               << "_B_" << local_rhs_rows << "x" << local_rhs_cols;
+    debug_log(size_stage.str().c_str());
+  }
+  if (StopAtStage("before_host_vector_alloc"))
+  {
+    return fail("stopped before host vector alloc");
+  }
 
   std::vector<float> host_a(
       static_cast<size_t>(std::max<int64_t>(1, local_matrix_rows) *
