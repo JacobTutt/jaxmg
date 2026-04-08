@@ -747,6 +747,10 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
       return fail("cudaMalloc(workspace) failed: " + cuda_error_string(cuda_status));
     }
     debug_log("after_cudaMalloc_workspace");
+    if (StopAtStage("after_workspace_alloc"))
+    {
+      return fail("stopped after workspace alloc");
+    }
   }
 
   size_t host_work_bytes = std::max(potrf_workspace_host_bytes, potrs_workspace_host_bytes);
@@ -771,6 +775,10 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     return fail("cudaMalloc(info) failed: " + cuda_error_string(cuda_status));
   }
   debug_log("after_cudaMalloc_info");
+  if (StopAtStage("after_info_alloc"))
+  {
+    return fail("stopped after info alloc");
+  }
 
   debug_log("before_cusolverMpPotrf");
   cusolver_status = cusolverMpPotrf(
