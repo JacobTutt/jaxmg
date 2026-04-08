@@ -500,6 +500,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     return fail("stopped before host vector alloc");
   }
 
+  debug_log("before_host_vector_alloc");
   std::vector<float> host_a(
       static_cast<size_t>(std::max<int64_t>(1, local_matrix_rows) *
                           std::max<int64_t>(1, local_matrix_cols)),
@@ -508,13 +509,16 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
       static_cast<size_t>(std::max<int64_t>(1, local_rhs_rows) *
                           std::max<int64_t>(1, local_rhs_cols)),
       1.0f);
+  debug_log("after_host_vector_alloc");
   std::vector<float> host_input_a_rowmajor;
   std::vector<float> host_input_b;
   bool use_input_buffers = input_a != nullptr && input_b != nullptr &&
                            !EnvFlagEnabled("JAXMG_CUSOLVERMP_USE_SYNTHETIC_LOCAL");
-  std::string debug_prefix = MultiRankDebugPrefix(
-      spec, problem, local_matrix_rows, local_matrix_cols, local_rhs_rows,
-      local_rhs_cols, use_input_buffers);
+  auto debug_prefix = [&]() {
+    return MultiRankDebugPrefix(spec, problem, local_matrix_rows,
+                                local_matrix_cols, local_rhs_rows,
+                                local_rhs_cols, use_input_buffers);
+  };
   if (use_input_buffers)
   {
     host_input_a_rowmajor.resize(static_cast<size_t>(problem.matrix_rows * problem.matrix_cols));
@@ -574,7 +578,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
         ncclCommDestroy(comm);
         return fail("cusolverMpMatrixScatterH2D(A) failed with status " +
                     cusolver_error_string(cusolver_status) + " [" +
-                    debug_prefix + "]");
+                    debug_prefix() + "]");
       }
 
       cusolver_status = cusolverMpMatrixScatterH2D(
@@ -593,7 +597,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
         ncclCommDestroy(comm);
         return fail("cusolverMpMatrixScatterH2D(B) failed with status " +
                     cusolver_error_string(cusolver_status) + " [" +
-                    debug_prefix + "]");
+                    debug_prefix() + "]");
       }
     }
     else
@@ -789,7 +793,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     cudaStreamDestroy(stream);
     ncclCommDestroy(comm);
     return fail("cusolverMpPotrf failed with status " +
-                cusolver_error_string(cusolver_status) + " [" + debug_prefix + "]");
+                cusolver_error_string(cusolver_status) + " [" + debug_prefix() + "]");
   }
   debug_log("after_cusolverMpPotrf");
 
@@ -828,7 +832,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     cudaStreamDestroy(stream);
     ncclCommDestroy(comm);
     return fail("cusolverMpPotrf completed with info=" + std::to_string(potrf_info) +
-                " [" + debug_prefix + "]");
+                " [" + debug_prefix() + "]");
   }
 
   cusolver_status = cusolverMpPotrs(
@@ -852,7 +856,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     cudaStreamDestroy(stream);
     ncclCommDestroy(comm);
     return fail("cusolverMpPotrs failed with status " +
-                cusolver_error_string(cusolver_status) + " [" + debug_prefix + "]");
+                cusolver_error_string(cusolver_status) + " [" + debug_prefix() + "]");
   }
 
   int potrs_info = 0;
@@ -890,7 +894,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     cudaStreamDestroy(stream);
     ncclCommDestroy(comm);
     return fail("cusolverMpPotrs completed with info=" + std::to_string(potrs_info) +
-                " [" + debug_prefix + "]");
+                " [" + debug_prefix() + "]");
   }
 
   cuda_status = cudaMemcpy(host_b.data(), d_b, rhs_bytes, cudaMemcpyDeviceToHost);
