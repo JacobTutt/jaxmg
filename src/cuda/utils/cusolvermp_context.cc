@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <sstream>
 #include <thread>
 #include <vector>
 
@@ -90,6 +91,39 @@ int LocalIndexFromGlobal(
   int block_offset = (proc_coord - src_proc + nprocs) % nprocs;
   int local_block_index = (block_index - block_offset) / nprocs;
   return local_block_index * block_size + (global_index % block_size);
+}
+
+std::vector<float> RowMajorToColumnMajor(
+    const std::vector<float> &row_major, int64_t rows, int64_t cols)
+{
+  std::vector<float> column_major(static_cast<size_t>(rows * cols), 0.0f);
+  for (int64_t row = 0; row < rows; ++row)
+  {
+    for (int64_t col = 0; col < cols; ++col)
+    {
+      column_major[static_cast<size_t>(row + col * rows)] =
+          row_major[static_cast<size_t>(row * cols + col)];
+    }
+  }
+  return column_major;
+}
+
+std::string MultiRankDebugPrefix(
+    const CuSolverMpContextSpec &spec, const CuSolverMpPotrsProblemSpec &problem,
+    int64_t local_matrix_rows, int64_t local_matrix_cols, int64_t local_rhs_rows,
+    int64_t local_rhs_cols, bool using_input_buffers)
+{
+  std::ostringstream oss;
+  oss << "rank=" << spec.process_rank << "/" << spec.process_count
+      << " grid=(" << spec.process_grid.nprow << "," << spec.process_grid.npcol
+      << ") local_A=(" << local_matrix_rows << "," << local_matrix_cols
+      << ") local_B=(" << local_rhs_rows << "," << local_rhs_cols
+      << ") global_A=(" << problem.matrix_rows << "," << problem.matrix_cols
+      << ") global_B=(" << problem.rhs_rows << "," << problem.rhs_cols
+      << ") block_A=(" << problem.matrix_block_rows << "," << problem.matrix_block_cols
+      << ") block_B=(" << problem.rhs_block_rows << "," << problem.rhs_block_cols
+      << ") input_buffers=" << (using_input_buffers ? "yes" : "no");
+  return oss.str();
 }
 
 } // namespace
@@ -379,16 +413,17 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     cudaFree(d_a);
     cusolverMpDestroyMatrixDesc(desc_b);
     cusolverMpDestroyMatrixDesc(desc_a);
-    cusolverMpDestroyGrid(grid);
-    cusolverMpDestroy(handle);
-    cudaStreamDestroy(stream);
-    ncclCommDestroy(comm);
-    return fail("cudaMalloc(B) failed: " + cuda_error_string(cuda_status));
+      cusolverMpDestroyGrid(grid);
+      cusolverMpDestroy(handle);
+      cudaStreamDestroy(stream);
+      ncclCommDestroy(comm);
+      return fail("cudaMalloc(B) failed: " + cuda_error_string(cuda_status));
   }
+
+  constexpr int64_t kSubmatrixStart = 1;
 
   size_t potrf_workspace_device_bytes = 0;
   size_t potrf_workspace_host_bytes = 0;
-  constexpr int64_t kSubmatrixStart = 1;
   cusolver_status = cusolverMpPotrf_bufferSize(
       handle, CUBLAS_FILL_MODE_LOWER, problem.matrix_rows, d_a, kSubmatrixStart,
       kSubmatrixStart, desc_a, CUDA_R_32F, &potrf_workspace_device_bytes,
@@ -439,6 +474,9 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   std::vector<float> host_input_a_rowmajor;
   std::vector<float> host_input_b;
   bool use_input_buffers = input_a != nullptr && input_b != nullptr;
+  std::string debug_prefix = MultiRankDebugPrefix(
+      spec, problem, local_matrix_rows, local_matrix_cols, local_rhs_rows,
+      local_rhs_cols, use_input_buffers);
   if (use_input_buffers)
   {
     host_input_a_rowmajor.resize(static_cast<size_t>(problem.matrix_rows * problem.matrix_cols));
@@ -476,49 +514,98 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
       return fail("cudaMemcpy(input b) failed: " + cuda_error_string(cuda_status));
     }
 
-    for (int64_t col = 0; col < problem.matrix_cols; ++col)
+    if (spec.process_count > 1)
     {
-      if (OwnerCoord(col, problem.matrix_block_cols, spec.process_grid.npcol) !=
-          process_col)
+      std::vector<float> host_input_a_colmajor =
+          RowMajorToColumnMajor(host_input_a_rowmajor, problem.matrix_rows,
+                                problem.matrix_cols);
+
+      cusolver_status = cusolverMpMatrixScatterH2D(
+          handle, problem.matrix_rows, problem.matrix_cols, d_a, kSubmatrixStart,
+          kSubmatrixStart, desc_a, 0,
+          spec.process_rank == 0 ? host_input_a_colmajor.data() : nullptr,
+          problem.matrix_rows);
+      if (cusolver_status != CUSOLVER_STATUS_SUCCESS)
       {
-        continue;
+        cudaFree(d_b);
+        cudaFree(d_a);
+        cusolverMpDestroyMatrixDesc(desc_b);
+        cusolverMpDestroyMatrixDesc(desc_a);
+        cusolverMpDestroyGrid(grid);
+        cusolverMpDestroy(handle);
+        cudaStreamDestroy(stream);
+        ncclCommDestroy(comm);
+        return fail("cusolverMpMatrixScatterH2D(A) failed with status " +
+                    cusolver_error_string(cusolver_status) + " [" +
+                    debug_prefix + "]");
       }
-      int local_col = LocalIndexFromGlobal(
-          col, problem.matrix_block_cols, process_col, spec.process_grid.npcol);
-      for (int64_t row = 0; row < problem.matrix_rows; ++row)
+
+      cusolver_status = cusolverMpMatrixScatterH2D(
+          handle, problem.rhs_rows, problem.rhs_cols, d_b, kSubmatrixStart,
+          kSubmatrixStart, desc_b, 0,
+          spec.process_rank == 0 ? host_input_b.data() : nullptr,
+          problem.rhs_rows);
+      if (cusolver_status != CUSOLVER_STATUS_SUCCESS)
       {
-        if (OwnerCoord(row, problem.matrix_block_rows, spec.process_grid.nprow) !=
-            process_row)
-        {
-          continue;
-        }
-        int local_row = LocalIndexFromGlobal(
-            row, problem.matrix_block_rows, process_row, spec.process_grid.nprow);
-        host_a[static_cast<size_t>(local_row + local_col * local_matrix_rows)] =
-            host_input_a_rowmajor[static_cast<size_t>(row * problem.matrix_cols + col)];
+        cudaFree(d_b);
+        cudaFree(d_a);
+        cusolverMpDestroyMatrixDesc(desc_b);
+        cusolverMpDestroyMatrixDesc(desc_a);
+        cusolverMpDestroyGrid(grid);
+        cusolverMpDestroy(handle);
+        cudaStreamDestroy(stream);
+        ncclCommDestroy(comm);
+        return fail("cusolverMpMatrixScatterH2D(B) failed with status " +
+                    cusolver_error_string(cusolver_status) + " [" +
+                    debug_prefix + "]");
       }
     }
-
-    for (int64_t col = 0; col < problem.rhs_cols; ++col)
+    else
     {
-      if (OwnerCoord(col, problem.rhs_block_cols, spec.process_grid.npcol) !=
-          process_col)
+      for (int64_t col = 0; col < problem.matrix_cols; ++col)
       {
-        continue;
-      }
-      int local_col = LocalIndexFromGlobal(
-          col, problem.rhs_block_cols, process_col, spec.process_grid.npcol);
-      for (int64_t row = 0; row < problem.rhs_rows; ++row)
-      {
-        if (OwnerCoord(row, problem.rhs_block_rows, spec.process_grid.nprow) !=
-            process_row)
+        if (OwnerCoord(col, problem.matrix_block_cols, spec.process_grid.npcol) !=
+            process_col)
         {
           continue;
         }
-        int local_row = LocalIndexFromGlobal(
-            row, problem.rhs_block_rows, process_row, spec.process_grid.nprow);
-        host_b[static_cast<size_t>(local_row + local_col * local_rhs_rows)] =
-            host_input_b[static_cast<size_t>(row * problem.rhs_cols + col)];
+        int local_col = LocalIndexFromGlobal(
+            col, problem.matrix_block_cols, process_col, spec.process_grid.npcol);
+        for (int64_t row = 0; row < problem.matrix_rows; ++row)
+        {
+          if (OwnerCoord(row, problem.matrix_block_rows, spec.process_grid.nprow) !=
+              process_row)
+          {
+            continue;
+          }
+          int local_row = LocalIndexFromGlobal(
+              row, problem.matrix_block_rows, process_row, spec.process_grid.nprow);
+          host_a[static_cast<size_t>(local_row + local_col * local_matrix_rows)] =
+              host_input_a_rowmajor[static_cast<size_t>(row * problem.matrix_cols + col)];
+        }
+      }
+
+      for (int64_t col = 0; col < problem.rhs_cols; ++col)
+      {
+        if (OwnerCoord(col, problem.rhs_block_cols, spec.process_grid.npcol) !=
+            process_col)
+        {
+          continue;
+        }
+        int local_col = LocalIndexFromGlobal(
+            col, problem.rhs_block_cols, process_col, spec.process_grid.npcol);
+        for (int64_t row = 0; row < problem.rhs_rows; ++row)
+        {
+          if (OwnerCoord(row, problem.rhs_block_rows, spec.process_grid.nprow) !=
+              process_row)
+          {
+            continue;
+          }
+          int local_row = LocalIndexFromGlobal(
+              row, problem.rhs_block_rows, process_row, spec.process_grid.nprow);
+          host_b[static_cast<size_t>(local_row + local_col * local_rhs_rows)] =
+              host_input_b[static_cast<size_t>(row * problem.rhs_cols + col)];
+        }
       }
     }
   }
@@ -559,32 +646,35 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     }
   }
 
-  cuda_status = cudaMemcpy(d_a, host_a.data(), matrix_bytes, cudaMemcpyHostToDevice);
-  if (cuda_status != cudaSuccess)
+  if (!(use_input_buffers && spec.process_count > 1))
   {
-    cudaFree(d_b);
-    cudaFree(d_a);
-    cusolverMpDestroyMatrixDesc(desc_b);
-    cusolverMpDestroyMatrixDesc(desc_a);
-    cusolverMpDestroyGrid(grid);
-    cusolverMpDestroy(handle);
-    cudaStreamDestroy(stream);
-    ncclCommDestroy(comm);
-    return fail("cudaMemcpy(A) failed: " + cuda_error_string(cuda_status));
-  }
+    cuda_status = cudaMemcpy(d_a, host_a.data(), matrix_bytes, cudaMemcpyHostToDevice);
+    if (cuda_status != cudaSuccess)
+    {
+      cudaFree(d_b);
+      cudaFree(d_a);
+      cusolverMpDestroyMatrixDesc(desc_b);
+      cusolverMpDestroyMatrixDesc(desc_a);
+      cusolverMpDestroyGrid(grid);
+      cusolverMpDestroy(handle);
+      cudaStreamDestroy(stream);
+      ncclCommDestroy(comm);
+      return fail("cudaMemcpy(A) failed: " + cuda_error_string(cuda_status));
+    }
 
-  cuda_status = cudaMemcpy(d_b, host_b.data(), rhs_bytes, cudaMemcpyHostToDevice);
-  if (cuda_status != cudaSuccess)
-  {
-    cudaFree(d_b);
-    cudaFree(d_a);
-    cusolverMpDestroyMatrixDesc(desc_b);
-    cusolverMpDestroyMatrixDesc(desc_a);
-    cusolverMpDestroyGrid(grid);
-    cusolverMpDestroy(handle);
-    cudaStreamDestroy(stream);
-    ncclCommDestroy(comm);
-    return fail("cudaMemcpy(B) failed: " + cuda_error_string(cuda_status));
+    cuda_status = cudaMemcpy(d_b, host_b.data(), rhs_bytes, cudaMemcpyHostToDevice);
+    if (cuda_status != cudaSuccess)
+    {
+      cudaFree(d_b);
+      cudaFree(d_a);
+      cusolverMpDestroyMatrixDesc(desc_b);
+      cusolverMpDestroyMatrixDesc(desc_a);
+      cusolverMpDestroyGrid(grid);
+      cusolverMpDestroy(handle);
+      cudaStreamDestroy(stream);
+      ncclCommDestroy(comm);
+      return fail("cudaMemcpy(B) failed: " + cuda_error_string(cuda_status));
+    }
   }
 
   size_t work_bytes = std::max(potrf_workspace_device_bytes, potrs_workspace_device_bytes);
@@ -646,7 +736,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     cudaStreamDestroy(stream);
     ncclCommDestroy(comm);
     return fail("cusolverMpPotrf failed with status " +
-                cusolver_error_string(cusolver_status));
+                cusolver_error_string(cusolver_status) + " [" + debug_prefix + "]");
   }
 
   int potrf_info = 0;
@@ -683,7 +773,8 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     cusolverMpDestroy(handle);
     cudaStreamDestroy(stream);
     ncclCommDestroy(comm);
-    return fail("cusolverMpPotrf completed with info=" + std::to_string(potrf_info));
+    return fail("cusolverMpPotrf completed with info=" + std::to_string(potrf_info) +
+                " [" + debug_prefix + "]");
   }
 
   cusolver_status = cusolverMpPotrs(
@@ -707,7 +798,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     cudaStreamDestroy(stream);
     ncclCommDestroy(comm);
     return fail("cusolverMpPotrs failed with status " +
-                cusolver_error_string(cusolver_status));
+                cusolver_error_string(cusolver_status) + " [" + debug_prefix + "]");
   }
 
   int potrs_info = 0;
@@ -744,7 +835,8 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     cusolverMpDestroy(handle);
     cudaStreamDestroy(stream);
     ncclCommDestroy(comm);
-    return fail("cusolverMpPotrs completed with info=" + std::to_string(potrs_info));
+    return fail("cusolverMpPotrs completed with info=" + std::to_string(potrs_info) +
+                " [" + debug_prefix + "]");
   }
 
   cuda_status = cudaMemcpy(host_b.data(), d_b, rhs_bytes, cudaMemcpyDeviceToHost);
