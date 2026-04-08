@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -259,6 +260,10 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   };
   auto cusolver_error_string = [](cusolverStatus_t status) -> std::string {
     return std::to_string(static_cast<int>(status));
+  };
+  auto debug_log = [&spec](const char *stage) {
+    std::fprintf(stdout, "rank=%d stage=%s\n", spec.process_rank, stage);
+    std::fflush(stdout);
   };
 
   cudaStream_t stream = nullptr;
@@ -657,6 +662,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
 
   if (!(use_input_buffers && spec.process_count > 1))
   {
+    debug_log("before_cudaMemcpy_local_buffers");
     cuda_status = cudaMemcpy(d_a, host_a.data(), matrix_bytes, cudaMemcpyHostToDevice);
     if (cuda_status != cudaSuccess)
     {
@@ -684,11 +690,13 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
       ncclCommDestroy(comm);
       return fail("cudaMemcpy(B) failed: " + cuda_error_string(cuda_status));
     }
+    debug_log("after_cudaMemcpy_local_buffers");
   }
 
   size_t work_bytes = std::max(potrf_workspace_device_bytes, potrs_workspace_device_bytes);
   if (work_bytes > 0)
   {
+    debug_log("before_cudaMalloc_workspace");
     cuda_status = cudaMalloc(&d_work, work_bytes);
     if (cuda_status != cudaSuccess)
     {
@@ -702,11 +710,13 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
       ncclCommDestroy(comm);
       return fail("cudaMalloc(workspace) failed: " + cuda_error_string(cuda_status));
     }
+    debug_log("after_cudaMalloc_workspace");
   }
 
   size_t host_work_bytes = std::max(potrf_workspace_host_bytes, potrs_workspace_host_bytes);
   std::vector<char> h_work(host_work_bytes);
 
+  debug_log("before_cudaMalloc_info");
   cuda_status = cudaMalloc(reinterpret_cast<void **>(&d_info), sizeof(int));
   if (cuda_status != cudaSuccess)
   {
@@ -724,7 +734,9 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     ncclCommDestroy(comm);
     return fail("cudaMalloc(info) failed: " + cuda_error_string(cuda_status));
   }
+  debug_log("after_cudaMalloc_info");
 
+  debug_log("before_cusolverMpPotrf");
   cusolver_status = cusolverMpPotrf(
       handle, CUBLAS_FILL_MODE_LOWER, problem.matrix_rows, d_a, kSubmatrixStart,
       kSubmatrixStart, desc_a, CUDA_R_32F, d_work, potrf_workspace_device_bytes,
@@ -747,6 +759,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     return fail("cusolverMpPotrf failed with status " +
                 cusolver_error_string(cusolver_status) + " [" + debug_prefix + "]");
   }
+  debug_log("after_cusolverMpPotrf");
 
   int potrf_info = 0;
   cuda_status = cudaMemcpy(&potrf_info, d_info, sizeof(int), cudaMemcpyDeviceToHost);
