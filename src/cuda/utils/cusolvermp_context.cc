@@ -125,6 +125,37 @@ std::vector<float> RowMajorToColumnMajor(
   return column_major;
 }
 
+std::vector<float> BuildSyntheticDenseSpdRowMajor(int64_t n)
+{
+  std::vector<float> lower(static_cast<size_t>(n * n), 0.0f);
+  for (int64_t i = 0; i < n; ++i)
+  {
+    lower[static_cast<size_t>(i * n + i)] = 2.0f + static_cast<float>(i);
+    for (int64_t j = 0; j < i; ++j)
+    {
+      lower[static_cast<size_t>(i * n + j)] =
+          0.05f * static_cast<float>((i + 1) + (j + 1));
+    }
+  }
+
+  std::vector<float> a(static_cast<size_t>(n * n), 0.0f);
+  for (int64_t i = 0; i < n; ++i)
+  {
+    for (int64_t j = 0; j < n; ++j)
+    {
+      float sum = 0.0f;
+      int64_t kmax = std::min(i, j);
+      for (int64_t k = 0; k <= kmax; ++k)
+      {
+        sum += lower[static_cast<size_t>(i * n + k)] *
+               lower[static_cast<size_t>(j * n + k)];
+      }
+      a[static_cast<size_t>(i * n + j)] = sum;
+    }
+  }
+  return a;
+}
+
 std::string MultiRankDebugPrefix(
     const CuSolverMpContextSpec &spec, const CuSolverMpPotrsProblemSpec &problem,
     int64_t local_matrix_rows, int64_t local_matrix_cols, int64_t local_rhs_rows,
@@ -677,23 +708,53 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   else
   {
     debug_log("before_synthetic_local_build");
-    for (int64_t global_i = 0;
-         global_i < std::min(problem.matrix_rows, problem.matrix_cols); ++global_i)
+    if (EnvFlagEnabled("JAXMG_CUSOLVERMP_USE_DENSE_SYNTHETIC"))
     {
-      if (OwnerCoord(global_i, problem.matrix_block_rows, spec.process_grid.nprow) !=
-              process_row ||
-          OwnerCoord(global_i, problem.matrix_block_cols, spec.process_grid.npcol) !=
-              process_col)
+      std::vector<float> synthetic_a_rowmajor =
+          BuildSyntheticDenseSpdRowMajor(problem.matrix_rows);
+      for (int64_t col = 0; col < problem.matrix_cols; ++col)
       {
-        continue;
+        if (OwnerCoord(col, problem.matrix_block_cols, spec.process_grid.npcol) !=
+            process_col)
+        {
+          continue;
+        }
+        int local_col = LocalIndexFromGlobal(
+            col, problem.matrix_block_cols, process_col, spec.process_grid.npcol);
+        for (int64_t row = 0; row < problem.matrix_rows; ++row)
+        {
+          if (OwnerCoord(row, problem.matrix_block_rows, spec.process_grid.nprow) !=
+              process_row)
+          {
+            continue;
+          }
+          int local_row = LocalIndexFromGlobal(
+              row, problem.matrix_block_rows, process_row, spec.process_grid.nprow);
+          host_a[static_cast<size_t>(local_row + local_col * local_matrix_rows)] =
+              synthetic_a_rowmajor[static_cast<size_t>(row * problem.matrix_cols + col)];
+        }
       }
+    }
+    else
+    {
+      for (int64_t global_i = 0;
+           global_i < std::min(problem.matrix_rows, problem.matrix_cols); ++global_i)
+      {
+        if (OwnerCoord(global_i, problem.matrix_block_rows, spec.process_grid.nprow) !=
+                process_row ||
+            OwnerCoord(global_i, problem.matrix_block_cols, spec.process_grid.npcol) !=
+                process_col)
+        {
+          continue;
+        }
 
-      int local_row = LocalIndexFromGlobal(
-          global_i, problem.matrix_block_rows, process_row, spec.process_grid.nprow);
-      int local_col = LocalIndexFromGlobal(
-          global_i, problem.matrix_block_cols, process_col, spec.process_grid.npcol);
-      host_a[static_cast<size_t>(local_row + local_col * local_matrix_rows)] =
-          static_cast<float>(global_i + 1);
+        int local_row = LocalIndexFromGlobal(
+            global_i, problem.matrix_block_rows, process_row, spec.process_grid.nprow);
+        int local_col = LocalIndexFromGlobal(
+            global_i, problem.matrix_block_cols, process_col, spec.process_grid.npcol);
+        host_a[static_cast<size_t>(local_row + local_col * local_matrix_rows)] =
+            static_cast<float>(global_i + 1);
+      }
     }
 
     if (local_rhs_cols > 0)
