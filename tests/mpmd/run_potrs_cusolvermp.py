@@ -5,6 +5,7 @@ import sys
 import traceback
 from dataclasses import dataclass
 from typing import Callable, Dict, List
+import numpy as np
 
 import jax
 import jax.distributed
@@ -123,8 +124,8 @@ def _solve_dense_spd_row_sharded(dtype, mesh):
 def _run_diag_solve(a, b, dtype, mesh):
     from jaxmg import potrs
 
-    host_a = jnp.asarray(a)
-    host_b = jnp.asarray(b)
+    host_a = np.asarray(jax.device_get(a))
+    host_b = np.asarray(jax.device_get(b))
     out, status = potrs(
         a,
         b,
@@ -135,7 +136,7 @@ def _run_diag_solve(a, b, dtype, mesh):
         return_status=True,
     )
     out.block_until_ready()
-    expected = jnp.linalg.solve(host_a, host_b)
+    expected = np.linalg.solve(host_a, host_b)
     assert int(status) == 0
     assert jnp.allclose(jnp.asarray(out), expected, atol=1e-6)
 
