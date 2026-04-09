@@ -580,6 +580,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
                     cusolver_error_string(cusolver_status) + " [" +
                     debug_prefix() + "]");
       }
+      debug_log("after_scatter_a");
 
       cusolver_status = cusolverMpMatrixScatterH2D(
           handle, problem.rhs_rows, problem.rhs_cols, d_b, kSubmatrixStart,
@@ -598,6 +599,26 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
         return fail("cusolverMpMatrixScatterH2D(B) failed with status " +
                     cusolver_error_string(cusolver_status) + " [" +
                     debug_prefix() + "]");
+      }
+      debug_log("after_scatter_b");
+      cuda_status = cudaStreamSynchronize(stream);
+      if (cuda_status != cudaSuccess)
+      {
+        cudaFree(d_b);
+        cudaFree(d_a);
+        cusolverMpDestroyMatrixDesc(desc_b);
+        cusolverMpDestroyMatrixDesc(desc_a);
+        cusolverMpDestroyGrid(grid);
+        cusolverMpDestroy(handle);
+        cudaStreamDestroy(stream);
+        ncclCommDestroy(comm);
+        return fail("cudaStreamSynchronize(after scatter) failed: " +
+                    cuda_error_string(cuda_status) + " [" + debug_prefix() + "]");
+      }
+      debug_log("after_scatter_sync");
+      if (StopAtStage("after_scatter_sync"))
+      {
+        return fail("stopped after scatter sync");
       }
     }
     else
