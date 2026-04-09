@@ -167,6 +167,20 @@ def potrs(
         - If the native solver fails the returned solution may contain NaNs and
           ``status`` will be non-zero.
     """
+    backend_family = os.environ.get("JAXMG_BACKEND_FAMILY", "mg").strip().lower()
+    if backend_family == "mp":
+        from ._potrs_cusolvermp import potrs_cusolvermp
+
+        return potrs_cusolvermp(
+            a,
+            b,
+            T_A,
+            mesh=mesh,
+            in_specs=in_specs,
+            pad=pad,
+            return_status=return_status,
+        )
+
     ensure_init_jaxmg_backend()
     plan = _plan_potrs_layout(a, b, T_A, in_specs)
     a = plan.a
