@@ -2,11 +2,12 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <sstream>
 #include <string>
 
 #if defined(JAXMG_HAVE_CUSOLVERMP) && defined(JAXMG_HAVE_NCCL)
+#include <cuda_runtime_api.h>
 #include <cuComplex.h>
+#include <nccl.h>
 
 namespace jaxmg
 {
@@ -92,32 +93,35 @@ cudaError_t LaunchPackGlobalRowMajorToLocalBlockCyclic(
 
 template <typename T>
 CuSolverMpGpuPackResult TryPackCuSolverMpInputsGpuImpl(
-    const CuSolverMpContextSpec &spec, const CuSolverMpPotrsProblemSpec &problem,
-    const void *input_a, size_t input_a_elements, const void *input_b,
-    size_t input_b_elements, void *d_a, int64_t local_matrix_rows,
-    int64_t local_matrix_cols, void *d_b, int64_t local_rhs_rows,
-    int64_t local_rhs_cols, ncclComm_t comm, cudaStream_t stream)
+    int process_rank, int process_count, int nprow, int npcol,
+    int64_t matrix_rows, int64_t matrix_cols, int64_t rhs_rows, int64_t rhs_cols,
+    int matrix_block_rows, int matrix_block_cols, int rhs_block_rows,
+    int rhs_block_cols, const void *input_a, size_t input_a_elements,
+    const void *input_b, size_t input_b_elements, void *d_a,
+    int64_t local_matrix_rows, int64_t local_matrix_cols, void *d_b,
+    int64_t local_rhs_rows, int64_t local_rhs_cols, ncclComm_t comm,
+    cudaStream_t stream)
 {
   CuSolverMpGpuPackResult unsupported{false, ""};
-  if (input_a == nullptr || input_b == nullptr || spec.process_count <= 1)
+  if (input_a == nullptr || input_b == nullptr || process_count <= 1)
   {
     return unsupported;
   }
 
   const size_t full_a_elements =
-      static_cast<size_t>(problem.matrix_rows * problem.matrix_cols);
+      static_cast<size_t>(matrix_rows * matrix_cols);
   const size_t full_b_elements =
-      static_cast<size_t>(problem.rhs_rows * problem.rhs_cols);
+      static_cast<size_t>(rhs_rows * rhs_cols);
   const bool a_is_full = input_a_elements == full_a_elements;
   const bool b_is_full = input_b_elements == full_b_elements;
   const bool a_is_row_sharded =
-      !a_is_full && problem.matrix_cols > 0 &&
-      input_a_elements % static_cast<size_t>(problem.matrix_cols) == 0 &&
-      input_a_elements * static_cast<size_t>(spec.process_count) == full_a_elements;
+      !a_is_full && matrix_cols > 0 &&
+      input_a_elements % static_cast<size_t>(matrix_cols) == 0 &&
+      input_a_elements * static_cast<size_t>(process_count) == full_a_elements;
   const bool b_is_row_sharded =
-      !b_is_full && problem.rhs_cols > 0 &&
-      input_b_elements % static_cast<size_t>(problem.rhs_cols) == 0 &&
-      input_b_elements * static_cast<size_t>(spec.process_count) == full_b_elements;
+      !b_is_full && rhs_cols > 0 &&
+      input_b_elements % static_cast<size_t>(rhs_cols) == 0 &&
+      input_b_elements * static_cast<size_t>(process_count) == full_b_elements;
 
   if ((!a_is_full && !a_is_row_sharded) || (!b_is_full && !b_is_row_sharded))
   {
@@ -178,23 +182,20 @@ CuSolverMpGpuPackResult TryPackCuSolverMpInputsGpuImpl(
   }
 
   cudaError_t cuda_status = LaunchPackGlobalRowMajorToLocalBlockCyclic(
-      static_cast<const T *>(d_global_a), static_cast<T *>(d_a), problem.matrix_rows,
-      problem.matrix_cols, local_matrix_rows, local_matrix_cols,
-      problem.matrix_block_rows, problem.matrix_block_cols,
-      spec.process_rank / spec.process_grid.npcol,
-      spec.process_rank % spec.process_grid.npcol, spec.process_grid.nprow,
-      spec.process_grid.npcol, stream);
+      static_cast<const T *>(d_global_a), static_cast<T *>(d_a), matrix_rows,
+      matrix_cols, local_matrix_rows, local_matrix_cols,
+      matrix_block_rows, matrix_block_cols, process_rank / npcol,
+      process_rank % npcol, nprow, npcol, stream);
   if (cuda_status != cudaSuccess)
   {
     return fail("pack kernel(A) launch failed: " + CudaErrorString(cuda_status));
   }
 
   cuda_status = LaunchPackGlobalRowMajorToLocalBlockCyclic(
-      static_cast<const T *>(d_global_b), static_cast<T *>(d_b), problem.rhs_rows,
-      problem.rhs_cols, local_rhs_rows, local_rhs_cols, problem.rhs_block_rows,
-      problem.rhs_block_cols, spec.process_rank / spec.process_grid.npcol,
-      spec.process_rank % spec.process_grid.npcol, spec.process_grid.nprow,
-      spec.process_grid.npcol, stream);
+      static_cast<const T *>(d_global_b), static_cast<T *>(d_b), rhs_rows,
+      rhs_cols, local_rhs_rows, local_rhs_cols, rhs_block_rows,
+      rhs_block_cols, process_rank / npcol, process_rank % npcol, nprow, npcol,
+      stream);
   if (cuda_status != cudaSuccess)
   {
     return fail("pack kernel(B) launch failed: " + CudaErrorString(cuda_status));
@@ -221,28 +222,36 @@ CuSolverMpGpuPackResult TryPackCuSolverMpInputsGpuImpl(
 } // namespace
 
 CuSolverMpGpuPackResult TryPackCuSolverMpInputsGpu(
-    CuSolverMpScalarType scalar_type, const CuSolverMpContextSpec &spec,
-    const CuSolverMpPotrsProblemSpec &problem, const void *input_a,
+    int scalar_type_tag, int process_rank, int process_count, int nprow,
+    int npcol, int64_t matrix_rows, int64_t matrix_cols, int64_t rhs_rows,
+    int64_t rhs_cols, int matrix_block_rows, int matrix_block_cols,
+    int rhs_block_rows, int rhs_block_cols, const void *input_a,
     size_t input_a_elements, const void *input_b, size_t input_b_elements,
     void *d_a, int64_t local_matrix_rows, int64_t local_matrix_cols, void *d_b,
     int64_t local_rhs_rows, int64_t local_rhs_cols, ncclComm_t comm,
     cudaStream_t stream)
 {
-  switch (scalar_type)
+  switch (scalar_type_tag)
   {
-  case CuSolverMpScalarType::kF32:
+  case 0:
     return TryPackCuSolverMpInputsGpuImpl<float>(
-        spec, problem, input_a, input_a_elements, input_b, input_b_elements, d_a,
+        process_rank, process_count, nprow, npcol, matrix_rows, matrix_cols,
+        rhs_rows, rhs_cols, matrix_block_rows, matrix_block_cols, rhs_block_rows,
+        rhs_block_cols, input_a, input_a_elements, input_b, input_b_elements, d_a,
         local_matrix_rows, local_matrix_cols, d_b, local_rhs_rows, local_rhs_cols,
         comm, stream);
-  case CuSolverMpScalarType::kF64:
+  case 1:
     return TryPackCuSolverMpInputsGpuImpl<double>(
-        spec, problem, input_a, input_a_elements, input_b, input_b_elements, d_a,
+        process_rank, process_count, nprow, npcol, matrix_rows, matrix_cols,
+        rhs_rows, rhs_cols, matrix_block_rows, matrix_block_cols, rhs_block_rows,
+        rhs_block_cols, input_a, input_a_elements, input_b, input_b_elements, d_a,
         local_matrix_rows, local_matrix_cols, d_b, local_rhs_rows, local_rhs_cols,
         comm, stream);
-  case CuSolverMpScalarType::kC128:
+  case 2:
     return TryPackCuSolverMpInputsGpuImpl<cuDoubleComplex>(
-        spec, problem, input_a, input_a_elements, input_b, input_b_elements, d_a,
+        process_rank, process_count, nprow, npcol, matrix_rows, matrix_cols,
+        rhs_rows, rhs_cols, matrix_block_rows, matrix_block_cols, rhs_block_rows,
+        rhs_block_cols, input_a, input_a_elements, input_b, input_b_elements, d_a,
         local_matrix_rows, local_matrix_cols, d_b, local_rhs_rows, local_rhs_cols,
         comm, stream);
   }

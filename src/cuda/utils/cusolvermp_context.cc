@@ -806,9 +806,13 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntimeTyped(
       !EnvFlagEnabled("JAXMG_CUSOLVERMP_DISABLE_DIRECT_GPU_PACK"))
   {
     CuSolverMpGpuPackResult gpu_pack = TryPackCuSolverMpInputsGpu(
-        scalar_type, spec, problem, input_a, input_a_elements, input_b,
-        input_b_elements, d_a, local_matrix_rows, local_matrix_cols, d_b,
-        local_rhs_rows, local_rhs_cols, comm, stream);
+        static_cast<int>(scalar_type), spec.process_rank, spec.process_count,
+        spec.process_grid.nprow, spec.process_grid.npcol, problem.matrix_rows,
+        problem.matrix_cols, problem.rhs_rows, problem.rhs_cols,
+        problem.matrix_block_rows, problem.matrix_block_cols,
+        problem.rhs_block_rows, problem.rhs_block_cols, input_a,
+        input_a_elements, input_b, input_b_elements, d_a, local_matrix_rows,
+        local_matrix_cols, d_b, local_rhs_rows, local_rhs_cols, comm, stream);
     if (!gpu_pack.error_message.empty())
     {
       cudaFree(d_b);
