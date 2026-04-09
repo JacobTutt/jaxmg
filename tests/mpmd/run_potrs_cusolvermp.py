@@ -81,9 +81,9 @@ def _initialize_distributed(config: LaunchConfig):
 
 
 def _solve_diag(dtype, mesh):
-    a = jnp.diag(jnp.arange(1, 5, dtype=dtype))
-    b = jnp.ones((4,), dtype=dtype)
-    return _run_diag_solve(a, b, dtype, mesh)
+    host_a = jnp.diag(jnp.arange(1, 5, dtype=dtype))
+    host_b = jnp.ones((4,), dtype=dtype)
+    return _run_diag_solve(host_a, host_b, dtype, mesh)
 
 
 def _make_dense_spd(dtype):
@@ -100,32 +100,47 @@ def _make_dense_spd(dtype):
 
 
 def _solve_dense_spd(dtype, mesh):
-    a = _make_dense_spd(dtype)
-    b = jnp.asarray([1.0, 0.5, -0.25, 0.75], dtype=dtype)
-    return _run_diag_solve(a, b, dtype, mesh)
+    host_a = _make_dense_spd(dtype)
+    host_b = jnp.asarray([1.0, 0.5, -0.25, 0.75], dtype=dtype)
+    return _run_diag_solve(host_a, host_b, dtype, mesh)
 
 
 def _solve_diag_row_sharded(dtype, mesh):
-    a = jnp.diag(jnp.arange(1, 5, dtype=dtype))
-    b = jnp.ones((4,), dtype=dtype)
-    a = jax.device_put(a, NamedSharding(mesh, P("x", None)))
-    b = jax.device_put(b, NamedSharding(mesh, P(None)))
-    return _run_diag_solve(a, b, dtype, mesh)
+    host_a = jnp.diag(jnp.arange(1, 5, dtype=dtype))
+    host_b = jnp.ones((4,), dtype=dtype)
+    a = jax.device_put(host_a, NamedSharding(mesh, P("x", None)))
+    b = jax.device_put(host_b, NamedSharding(mesh, P(None)))
+    return _run_diag_solve(a, b, dtype, mesh, host_a=host_a, host_b=host_b)
 
 
 def _solve_dense_spd_row_sharded(dtype, mesh):
-    a = _make_dense_spd(dtype)
-    b = jnp.asarray([1.0, 0.5, -0.25, 0.75], dtype=dtype)
-    a = jax.device_put(a, NamedSharding(mesh, P("x", None)))
-    b = jax.device_put(b, NamedSharding(mesh, P(None)))
-    return _run_diag_solve(a, b, dtype, mesh)
+    host_a = _make_dense_spd(dtype)
+    host_b = jnp.asarray([1.0, 0.5, -0.25, 0.75], dtype=dtype)
+    a = jax.device_put(host_a, NamedSharding(mesh, P("x", None)))
+    b = jax.device_put(host_b, NamedSharding(mesh, P(None)))
+    return _run_diag_solve(a, b, dtype, mesh, host_a=host_a, host_b=host_b)
 
 
-def _run_diag_solve(a, b, dtype, mesh):
+def _run_single_device_reference(host_a, host_b):
+    device = jax.local_devices()[0]
+
+    @jax.jit
+    def _solve(lhs, rhs):
+        return jnp.linalg.solve(lhs, rhs)
+
+    with jax.default_device(device):
+        ref_a = jnp.asarray(host_a)
+        ref_b = jnp.asarray(host_b)
+        return np.asarray(_solve(ref_a, ref_b))
+
+
+def _run_diag_solve(a, b, dtype, mesh, host_a=None, host_b=None):
     from jaxmg import potrs
 
-    host_a = np.asarray(jax.device_get(a))
-    host_b = np.asarray(jax.device_get(b))
+    if host_a is None:
+        host_a = np.asarray(jax.device_get(a))
+    if host_b is None:
+        host_b = np.asarray(jax.device_get(b))
     out, status = potrs(
         a,
         b,
@@ -136,7 +151,7 @@ def _run_diag_solve(a, b, dtype, mesh):
         return_status=True,
     )
     out.block_until_ready()
-    expected = np.linalg.solve(host_a, host_b)
+    expected = _run_single_device_reference(host_a, host_b)
     assert int(status) == 0
     assert jnp.allclose(jnp.asarray(out), expected, atol=1e-6)
 
