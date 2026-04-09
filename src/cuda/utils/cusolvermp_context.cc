@@ -5,9 +5,11 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
 #if defined(JAXMG_HAVE_CUSOLVERMP) && defined(JAXMG_HAVE_NCCL)
@@ -61,16 +63,49 @@ bool StopAtStage(const char *stage)
 }
 
 #if defined(JAXMG_HAVE_CUSOLVERMP) && defined(JAXMG_HAVE_NCCL)
+int GetNcclBootstrapTimeoutMs()
+{
+  return std::stoi(
+      GetEnvOrDefault("JAXMG_CUSOLVERMP_BOOTSTRAP_TIMEOUT_MS", "60000"));
+}
+
 bool WriteNcclUniqueId(const std::string &path, const ncclUniqueId &comm_id)
 {
-  std::ofstream out(path, std::ios::binary | std::ios::trunc);
+  std::filesystem::path final_path(path);
+  std::error_code ec;
+  if (final_path.has_parent_path())
+  {
+    std::filesystem::create_directories(final_path.parent_path(), ec);
+    if (ec)
+    {
+      return false;
+    }
+  }
+
+  std::filesystem::path temp_path = final_path;
+  temp_path += ".tmp." + std::to_string(::getpid());
+
+  std::ofstream out(temp_path, std::ios::binary | std::ios::trunc);
   if (!out)
   {
     return false;
   }
   out.write(reinterpret_cast<const char *>(&comm_id), sizeof(comm_id));
+  out.flush();
   out.close();
-  return out.good();
+  if (!out.good())
+  {
+    std::filesystem::remove(temp_path, ec);
+    return false;
+  }
+
+  std::filesystem::rename(temp_path, final_path, ec);
+  if (ec)
+  {
+    std::filesystem::remove(temp_path, ec);
+    return false;
+  }
+  return true;
 }
 
 bool ReadNcclUniqueIdWithRetry(
@@ -435,8 +470,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   }
   else
   {
-    int timeout_ms = std::stoi(
-        GetEnvOrDefault("JAXMG_CUSOLVERMP_BOOTSTRAP_TIMEOUT_MS", "10000"));
+    int timeout_ms = GetNcclBootstrapTimeoutMs();
     if (!ReadNcclUniqueIdWithRetry(bootstrap_path, &comm_id, timeout_ms))
     {
       return fail("timed out waiting for NCCL bootstrap file: " + bootstrap_path);
