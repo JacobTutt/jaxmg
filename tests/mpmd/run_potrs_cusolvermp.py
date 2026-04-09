@@ -3,6 +3,7 @@ import os
 import socket
 import sys
 import traceback
+from dataclasses import dataclass
 from typing import Callable, Dict, List
 
 import jax
@@ -10,46 +11,75 @@ import jax.distributed
 import jax.numpy as jnp
 from jax.sharding import NamedSharding, PartitionSpec as P
 
-coord_addr = sys.argv[1]
-proc_id = int(sys.argv[2])
-num_procs = int(sys.argv[3])
 
-jax.distributed.initialize(
-    coordinator_address=coord_addr,
-    num_processes=num_procs,
-    process_id=proc_id,
-    local_device_ids=[proc_id],
-    coordinator_bind_address=coord_addr if proc_id == 0 else None,
-)
+@dataclass(frozen=True)
+class LaunchConfig:
+    coordinator_address: str
+    process_id: int
+    num_processes: int
+    local_device_id: int
+    task_name: str
+    task_dtype_name: str
 
-os.environ["JAXMG_BACKEND_FAMILY"] = "mp"
-os.environ["JAXMG_ENABLE_REAL_CUSOLVERMP"] = "1"
-os.environ.pop("JAXMG_ENABLE_MP_STUB", None)
 
-mesh = jax.make_mesh((jax.device_count(),), ("x",))
+def _resolve_launch_config(argv: List[str]) -> LaunchConfig:
+    if len(argv) >= 6:
+        return LaunchConfig(
+            coordinator_address=argv[1],
+            process_id=int(argv[2]),
+            num_processes=int(argv[3]),
+            local_device_id=int(os.environ.get("SLURM_LOCALID", argv[2])),
+            task_name=argv[4],
+            task_dtype_name=argv[5],
+        )
 
-from jaxmg import potrs
+    return LaunchConfig(
+        coordinator_address=os.environ["JAX_COORDINATOR_ADDRESS"],
+        process_id=int(os.environ["SLURM_PROCID"]),
+        num_processes=int(os.environ["SLURM_NTASKS"]),
+        local_device_id=int(os.environ.get("SLURM_LOCALID", "0")),
+        task_name=os.environ["JAXMG_MPTEST_NAME"],
+        task_dtype_name=os.environ["JAXMG_MPTEST_DTYPE"],
+    )
 
 
 def _println(prefix: str, payload: dict):
     print(f"{prefix} {json.dumps(payload, sort_keys=True)}", flush=True)
 
 
-def _solve_diag(dtype):
+def _initialize_distributed(config: LaunchConfig):
+    jax.distributed.initialize(
+        coordinator_address=config.coordinator_address,
+        num_processes=config.num_processes,
+        process_id=config.process_id,
+        local_device_ids=[config.local_device_id],
+        coordinator_bind_address=(
+            config.coordinator_address if config.process_id == 0 else None
+        ),
+    )
+
+    os.environ["JAXMG_BACKEND_FAMILY"] = "mp"
+    os.environ["JAXMG_ENABLE_REAL_CUSOLVERMP"] = "1"
+    os.environ.pop("JAXMG_ENABLE_MP_STUB", None)
+
+
+def _solve_diag(dtype, mesh):
     a = jnp.diag(jnp.arange(1, 5, dtype=dtype))
     b = jnp.ones((4,), dtype=dtype)
-    return _run_diag_solve(a, b, dtype)
+    return _run_diag_solve(a, b, dtype, mesh)
 
 
-def _solve_diag_row_sharded(dtype):
+def _solve_diag_row_sharded(dtype, mesh):
     a = jnp.diag(jnp.arange(1, 5, dtype=dtype))
     b = jnp.ones((4,), dtype=dtype)
     a = jax.device_put(a, NamedSharding(mesh, P("x", None)))
     b = jax.device_put(b, NamedSharding(mesh, P(None)))
-    return _run_diag_solve(a, b, dtype)
+    return _run_diag_solve(a, b, dtype, mesh)
 
 
-def _run_diag_solve(a, b, dtype):
+def _run_diag_solve(a, b, dtype, mesh):
+    from jaxmg import potrs
+
     out, status = potrs(
         a,
         b,
@@ -75,35 +105,37 @@ def _run_diag_solve(a, b, dtype):
         "out_shape": tuple(out.shape),
         "out": [float(x) for x in jnp.asarray(out)],
         "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+        "slurm_localid": os.environ.get("SLURM_LOCALID"),
     }
 
 
-def _build_registry() -> Dict[str, Callable]:
+def _build_registry(mesh) -> Dict[str, Callable]:
     return {
-        "diag": _solve_diag,
-        "diag_row_sharded": _solve_diag_row_sharded,
+        "diag": lambda dtype: _solve_diag(dtype, mesh),
+        "diag_row_sharded": lambda dtype: _solve_diag_row_sharded(dtype, mesh),
     }
 
 
 def main(argv: List[str]):
-    task_name = argv[4]
-    task_dtype_name = argv[5]
-    registry = _build_registry()
+    config = _resolve_launch_config(argv)
+    _initialize_distributed(config)
+    mesh = jax.make_mesh((jax.device_count(),), ("x",))
+    registry = _build_registry(mesh)
 
     dtypes = {
         "float32": jnp.float32,
         "float64": jnp.float64,
     }
-    dt = dtypes[task_dtype_name]
-    fn = registry[task_name]
+    dt = dtypes[config.task_dtype_name]
+    fn = registry[config.task_name]
 
     _println(
         "MPTEST_DISCOVER",
         {
-            "proc": proc_id,
+            "proc": config.process_id,
             "available": sorted(registry.keys()),
-            "selected": [task_name],
-            "params": {"dtype": [task_dtype_name]},
+            "selected": [config.task_name],
+            "params": {"dtype": [config.task_dtype_name]},
         },
     )
 
@@ -112,28 +144,35 @@ def main(argv: List[str]):
         _println(
             "MPTEST_RESULT",
             {
-                "proc": proc_id,
-                "name": task_name,
+                "proc": config.process_id,
+                "name": config.task_name,
                 "status": "ok",
-                "params": {"dtype": task_dtype_name},
+                "params": {"dtype": config.task_dtype_name},
                 "payload": payload,
             },
         )
-        _println("MPTEST_SUMMARY", {"proc": proc_id, "ok": 1, "fail": 0, "total": 1})
+        _println(
+            "MPTEST_SUMMARY",
+            {"proc": config.process_id, "ok": 1, "fail": 0, "total": 1},
+        )
         return 0
     except Exception:
         _println(
             "MPTEST_RESULT",
             {
-                "proc": proc_id,
-                "name": task_name,
+                "proc": config.process_id,
+                "name": config.task_name,
                 "status": "fail",
-                "params": {"dtype": task_dtype_name},
+                "params": {"dtype": config.task_dtype_name},
                 "traceback": traceback.format_exc(limit=40),
             },
         )
-        _println("MPTEST_SUMMARY", {"proc": proc_id, "ok": 0, "fail": 1, "total": 1})
+        _println(
+            "MPTEST_SUMMARY",
+            {"proc": config.process_id, "ok": 0, "fail": 1, "total": 1},
+        )
         return 1
 
 
-raise SystemExit(main(sys.argv))
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
