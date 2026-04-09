@@ -25,6 +25,15 @@ def _cases():
     return cases
 
 
+def _dtypes():
+    dtypes = ["float32"]
+    if os.environ.get("JAXMG_RUN_FLOAT64_MP", "").strip() == "1":
+        dtypes.append("float64")
+    if os.environ.get("JAXMG_RUN_COMPLEX128_MP", "").strip() == "1":
+        dtypes.append("complex128")
+    return dtypes
+
+
 def _submit_same_node_slurm_case(name: str, dtype_name: str) -> tuple[str, str]:
     run_root = Path("/home/u6n/jacobtutt.u6n/jaxmg_checkpoint_runs")
     repo_root = Path("/home/u6n/jacobtutt.u6n/jaxmg_multi_node")
@@ -142,7 +151,7 @@ def _assert_runner_success(out: str, err: str, name: str, dtype_name: str):
 
 
 @pytest.mark.parametrize("name", _cases())
-@pytest.mark.parametrize("dtype_name", ["float32"])
+@pytest.mark.parametrize("dtype_name", _dtypes())
 def test_potrs_cusolvermp_diag_multirank(name, dtype_name):
     out, err = _submit_same_node_slurm_case(name, dtype_name)
     _assert_runner_success(out, err, name, dtype_name)
