@@ -18,7 +18,7 @@ def test_build_potrs_cusolvermp_context_config_tracks_native_payload_fields():
     assert config.process_rank == 0
     assert config.process_count == jax.process_count()
     assert config.local_device_count == jax.local_device_count()
-    assert config.local_device_index == 0
+    assert config.local_device_index == jax.local_devices()[0].id
     assert config.global_device_count == mesh.devices.size
     assert config.process_grid == (1, 1)
     assert config.matrix_block_shape == (4, 4)

@@ -207,10 +207,9 @@ std::vector<std::string> CuSolverMpContextLaunchIssues(
   {
     issues.push_back("process_rank must satisfy 0 <= process_rank < process_count.");
   }
-  if (spec.local_device_index != 0)
+  if (spec.local_device_index < 0)
   {
-    issues.push_back(
-        "The initial cuSOLVERMp path assumes local_device_index == 0 within each process.");
+    issues.push_back("local_device_index must be non-negative.");
   }
   if (spec.process_grid.nprow <= 0 || spec.process_grid.npcol <= 0)
   {

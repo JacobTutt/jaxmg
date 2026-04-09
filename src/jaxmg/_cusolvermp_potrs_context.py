@@ -78,7 +78,7 @@ def build_potrs_cusolvermp_context_config(
         process_rank=plan.backend.runtime.runtime.process_index,
         process_count=plan.backend.runtime.runtime.process_count,
         local_device_count=plan.backend.runtime.runtime.local_device_count,
-        local_device_index=0,
+        local_device_index=plan.backend.runtime.runtime.local_device_index,
         global_device_count=plan.backend.runtime.runtime.global_device_count,
         process_grid=plan.backend.runtime.runtime.process_grid,
         matrix_block_shape=call_spec.matrix.block_shape,
