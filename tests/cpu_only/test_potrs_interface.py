@@ -60,13 +60,14 @@ def test_potrs_dispatches_to_cusolvermp_backend(monkeypatch):
 
     called = {}
 
-    def fake_potrs_cusolvermp(a, b, T_A, mesh, in_specs, pad, return_status):
+    def fake_potrs_cusolvermp(a, b, T_A, mesh, in_specs, pad, process_grid, return_status):
         called["args"] = {
             "shape_a": a.shape,
             "shape_b": b.shape,
             "T_A": T_A,
             "in_specs": in_specs,
             "pad": pad,
+            "process_grid": process_grid,
             "return_status": return_status,
         }
         return "mp-result"
@@ -74,7 +75,15 @@ def test_potrs_dispatches_to_cusolvermp_backend(monkeypatch):
     monkeypatch.setenv("JAXMG_BACKEND_FAMILY", "mp")
     monkeypatch.setattr("jaxmg._potrs_cusolvermp.potrs_cusolvermp", fake_potrs_cusolvermp)
 
-    out = potrs(A, b, T_A, mesh=mesh, in_specs=(P("x", None),), pad=False)
+    out = potrs(
+        A,
+        b,
+        T_A,
+        mesh=mesh,
+        in_specs=(P("x", None),),
+        pad=False,
+        process_grid=(2, 1),
+    )
 
     assert out == "mp-result"
     assert called["args"] == {
@@ -83,6 +92,7 @@ def test_potrs_dispatches_to_cusolvermp_backend(monkeypatch):
         "T_A": 2,
         "in_specs": (P("x", None),),
         "pad": False,
+        "process_grid": (2, 1),
         "return_status": False,
     }
 
@@ -93,8 +103,9 @@ def test_potrs_dispatches_return_status_to_cusolvermp_backend(monkeypatch):
     T_A = 2
     mesh = jax.make_mesh((jax.local_device_count(),), ("x",))
 
-    def fake_potrs_cusolvermp(a, b, T_A, mesh, in_specs, pad, return_status):
+    def fake_potrs_cusolvermp(a, b, T_A, mesh, in_specs, pad, process_grid, return_status):
         assert return_status is True
+        assert process_grid == (2, 1)
         return b, 0
 
     monkeypatch.setenv("JAXMG_BACKEND_FAMILY", "mp")
@@ -107,6 +118,7 @@ def test_potrs_dispatches_return_status_to_cusolvermp_backend(monkeypatch):
         mesh=mesh,
         in_specs=(P("x", None),),
         return_status=True,
+        process_grid=(2, 1),
     )
 
     assert out.shape == (4, 1)

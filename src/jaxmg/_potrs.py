@@ -109,6 +109,7 @@ def potrs(
     in_specs: Tuple[P] | List[P] | P,
     return_status: bool = False,
     pad=True,
+    process_grid: Tuple[int, int] | None = None,
 ) -> Union[Array, Tuple[Array, int]]:
     """Solve the linear system A x = B using the multi-GPU potrs native kernel.
 
@@ -150,6 +151,10 @@ def potrs(
             ``a`` so each local shard length is compatible with ``T_A``; if
             False the caller must ensure shapes already match the kernel's
             requirements.
+        process_grid (tuple[int, int] | None, optional): Experimental
+            cuSOLVERMp process-grid override. Ignored by the current
+            cuSolverMg-backed path, but forwarded to the ``mp`` backend when
+            ``JAXMG_BACKEND_FAMILY=mp``.
 
     Returns:
         Array or (Array, int): The solution ``x`` (replicated across devices).
@@ -178,6 +183,7 @@ def potrs(
             mesh=mesh,
             in_specs=in_specs,
             pad=pad,
+            process_grid=process_grid,
             return_status=return_status,
         )
 
