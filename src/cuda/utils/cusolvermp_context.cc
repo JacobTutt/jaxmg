@@ -421,7 +421,6 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   ncclUniqueId comm_id;
   ncclResult_t nccl_status = ncclSuccess;
   std::string bootstrap_path = ResolveNcclBootstrapPath(spec);
-  std::string rhs_gather_path = bootstrap_path + ".rhs.bin";
   if (spec.process_rank == 0)
   {
     nccl_status = ncclGetUniqueId(&comm_id);
@@ -1339,10 +1338,35 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
                   cuda_error_string(cuda_status) + " [" + debug_prefix() + "]");
     }
 
-    if (spec.process_rank == 0)
+    void *d_solved_rhs = nullptr;
+    const size_t solved_rhs_bytes = sizeof(float) * solved_rhs.size();
+    cuda_status = cudaMalloc(&d_solved_rhs, std::max<size_t>(1, solved_rhs_bytes));
+    if (cuda_status != cudaSuccess)
     {
-      if (!WriteFloatVector(rhs_gather_path, solved_rhs))
+      cudaFree(d_info);
+      if (d_work != nullptr)
       {
+        cudaFree(d_work);
+      }
+      cudaFree(d_b);
+      cudaFree(d_a);
+      cusolverMpDestroyMatrixDesc(desc_b);
+      cusolverMpDestroyMatrixDesc(desc_a);
+      cusolverMpDestroyGrid(grid);
+      cusolverMpDestroy(handle);
+      cudaStreamDestroy(stream);
+      ncclCommDestroy(comm);
+      return fail("cudaMalloc(gathered rhs) failed: " +
+                  cuda_error_string(cuda_status) + " [" + debug_prefix() + "]");
+    }
+
+    if (spec.process_rank == 0 && solved_rhs_bytes > 0)
+    {
+      cuda_status = cudaMemcpy(
+          d_solved_rhs, solved_rhs.data(), solved_rhs_bytes, cudaMemcpyHostToDevice);
+      if (cuda_status != cudaSuccess)
+      {
+        cudaFree(d_solved_rhs);
         cudaFree(d_info);
         if (d_work != nullptr)
         {
@@ -1356,15 +1380,61 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
         cusolverMpDestroy(handle);
         cudaStreamDestroy(stream);
         ncclCommDestroy(comm);
-        return fail("failed to write gathered RHS file: " + rhs_gather_path);
+        return fail("cudaMemcpy(gathered rhs h2d) failed: " +
+                    cuda_error_string(cuda_status) + " [" + debug_prefix() + "]");
       }
     }
-    else
+
+    nccl_status = ncclBroadcast(
+        d_solved_rhs, d_solved_rhs, solved_rhs.size(), ncclFloat32, 0, comm, stream);
+    if (nccl_status != ncclSuccess)
     {
-      int timeout_ms = std::stoi(
-          GetEnvOrDefault("JAXMG_CUSOLVERMP_BOOTSTRAP_TIMEOUT_MS", "10000"));
-      if (!ReadFloatVectorWithRetry(rhs_gather_path, &solved_rhs, timeout_ms))
+      cudaFree(d_solved_rhs);
+      cudaFree(d_info);
+      if (d_work != nullptr)
       {
+        cudaFree(d_work);
+      }
+      cudaFree(d_b);
+      cudaFree(d_a);
+      cusolverMpDestroyMatrixDesc(desc_b);
+      cusolverMpDestroyMatrixDesc(desc_a);
+      cusolverMpDestroyGrid(grid);
+      cusolverMpDestroy(handle);
+      cudaStreamDestroy(stream);
+      ncclCommDestroy(comm);
+      return fail("ncclBroadcast(gathered rhs) failed: " +
+                  nccl_error_string(nccl_status) + " [" + debug_prefix() + "]");
+    }
+
+    cuda_status = cudaStreamSynchronize(stream);
+    if (cuda_status != cudaSuccess)
+    {
+      cudaFree(d_solved_rhs);
+      cudaFree(d_info);
+      if (d_work != nullptr)
+      {
+        cudaFree(d_work);
+      }
+      cudaFree(d_b);
+      cudaFree(d_a);
+      cusolverMpDestroyMatrixDesc(desc_b);
+      cusolverMpDestroyMatrixDesc(desc_a);
+      cusolverMpDestroyGrid(grid);
+      cusolverMpDestroy(handle);
+      cudaStreamDestroy(stream);
+      ncclCommDestroy(comm);
+      return fail("cudaStreamSynchronize(after rhs broadcast) failed: " +
+                  cuda_error_string(cuda_status) + " [" + debug_prefix() + "]");
+    }
+
+    if (solved_rhs_bytes > 0)
+    {
+      cuda_status = cudaMemcpy(
+          solved_rhs.data(), d_solved_rhs, solved_rhs_bytes, cudaMemcpyDeviceToHost);
+      if (cuda_status != cudaSuccess)
+      {
+        cudaFree(d_solved_rhs);
         cudaFree(d_info);
         if (d_work != nullptr)
         {
@@ -1378,9 +1448,11 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
         cusolverMpDestroy(handle);
         cudaStreamDestroy(stream);
         ncclCommDestroy(comm);
-        return fail("timed out waiting for gathered RHS file: " + rhs_gather_path);
+        return fail("cudaMemcpy(gathered rhs d2h) failed: " +
+                    cuda_error_string(cuda_status) + " [" + debug_prefix() + "]");
       }
     }
+    cudaFree(d_solved_rhs);
   }
   else
   {
