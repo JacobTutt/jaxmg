@@ -96,7 +96,7 @@ def _make_dense_spd(dtype):
         ],
         dtype=dtype,
     )
-    return lower @ lower.T
+    return lower @ lower.T.conj()
 
 
 def _solve_dense_spd(dtype, mesh):
@@ -188,6 +188,7 @@ def main(argv: List[str]):
     dtypes = {
         "float32": jnp.float32,
         "float64": jnp.float64,
+        "complex128": jnp.complex128,
     }
     dt = dtypes[config.task_dtype_name]
     fn = registry[config.task_name]

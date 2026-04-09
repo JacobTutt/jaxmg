@@ -16,6 +16,7 @@
 
 #if defined(JAXMG_HAVE_CUSOLVERMP) && defined(JAXMG_HAVE_NCCL)
 #include <cuda_runtime_api.h>
+#include <cuComplex.h>
 #include <cusolverMp.h>
 #include <nccl.h>
 #endif
@@ -80,9 +81,99 @@ template <>
 struct CuSolverMpTypeTraits<double>
 {
   static constexpr cudaDataType_t kCudaType = CUDA_R_64F;
-  static constexpr ncclDataType_t kNcclType = ncclFloat64;
   static constexpr const char *kName = "float64";
 };
+
+template <>
+struct CuSolverMpTypeTraits<cuDoubleComplex>
+{
+  static constexpr cudaDataType_t kCudaType = CUDA_C_64F;
+  static constexpr const char *kName = "complex128";
+};
+
+template <typename T>
+T ZeroValue()
+{
+  return static_cast<T>(0);
+}
+
+template <>
+cuDoubleComplex ZeroValue<cuDoubleComplex>()
+{
+  return make_cuDoubleComplex(0.0, 0.0);
+}
+
+template <typename T>
+T MakeRealValue(double real)
+{
+  return static_cast<T>(real);
+}
+
+template <>
+cuDoubleComplex MakeRealValue<cuDoubleComplex>(double real)
+{
+  return make_cuDoubleComplex(real, 0.0);
+}
+
+template <typename T>
+T AddValue(T lhs, T rhs)
+{
+  return lhs + rhs;
+}
+
+template <>
+cuDoubleComplex AddValue(cuDoubleComplex lhs, cuDoubleComplex rhs)
+{
+  return cuCadd(lhs, rhs);
+}
+
+template <typename T>
+T SubValue(T lhs, T rhs)
+{
+  return lhs - rhs;
+}
+
+template <>
+cuDoubleComplex SubValue(cuDoubleComplex lhs, cuDoubleComplex rhs)
+{
+  return cuCsub(lhs, rhs);
+}
+
+template <typename T>
+T MulValue(T lhs, T rhs)
+{
+  return lhs * rhs;
+}
+
+template <>
+cuDoubleComplex MulValue(cuDoubleComplex lhs, cuDoubleComplex rhs)
+{
+  return cuCmul(lhs, rhs);
+}
+
+template <typename T>
+T ConjValue(T value)
+{
+  return value;
+}
+
+template <>
+cuDoubleComplex ConjValue(cuDoubleComplex value)
+{
+  return cuConj(value);
+}
+
+template <typename T>
+double AbsValue(T value)
+{
+  return std::abs(value);
+}
+
+template <>
+double AbsValue(cuDoubleComplex value)
+{
+  return cuCabs(value);
+}
 
 int GetNcclBootstrapTimeoutMs()
 {
@@ -228,7 +319,7 @@ bool ReadTypedMatrixChunkWithRetry(
         continue;
       }
       std::vector<T> local_values(
-          static_cast<size_t>(local_rows * local_cols), T{0});
+          static_cast<size_t>(local_rows * local_cols), ZeroValue<T>());
       in.read(reinterpret_cast<char *>(local_values.data()),
               static_cast<std::streamsize>(local_values.size() * sizeof(T)));
       if (static_cast<size_t>(in.gcount()) == local_values.size() * sizeof(T))
@@ -264,7 +355,7 @@ template <typename T>
 std::vector<T> RowMajorToColumnMajor(
     const std::vector<T> &row_major, int64_t rows, int64_t cols)
 {
-  std::vector<T> column_major(static_cast<size_t>(rows * cols), T{0});
+  std::vector<T> column_major(static_cast<size_t>(rows * cols), ZeroValue<T>());
   for (int64_t row = 0; row < rows; ++row)
   {
     for (int64_t col = 0; col < cols; ++col)
@@ -279,28 +370,30 @@ std::vector<T> RowMajorToColumnMajor(
 template <typename T>
 std::vector<T> BuildSyntheticDenseSpdRowMajor(int64_t n)
 {
-  std::vector<T> lower(static_cast<size_t>(n * n), T{0});
+  std::vector<T> lower(static_cast<size_t>(n * n), ZeroValue<T>());
   for (int64_t i = 0; i < n; ++i)
   {
-    lower[static_cast<size_t>(i * n + i)] = static_cast<T>(2.0 + i);
+    lower[static_cast<size_t>(i * n + i)] = MakeRealValue<T>(2.0 + i);
     for (int64_t j = 0; j < i; ++j)
     {
       lower[static_cast<size_t>(i * n + j)] =
-          static_cast<T>(0.05 * static_cast<double>((i + 1) + (j + 1)));
+          MakeRealValue<T>(0.05 * static_cast<double>((i + 1) + (j + 1)));
     }
   }
 
-  std::vector<T> a(static_cast<size_t>(n * n), T{0});
+  std::vector<T> a(static_cast<size_t>(n * n), ZeroValue<T>());
   for (int64_t i = 0; i < n; ++i)
   {
     for (int64_t j = 0; j < n; ++j)
     {
-      T sum = T{0};
+      T sum = ZeroValue<T>();
       int64_t kmax = std::min(i, j);
       for (int64_t k = 0; k <= kmax; ++k)
       {
-        sum += lower[static_cast<size_t>(i * n + k)] *
-               lower[static_cast<size_t>(j * n + k)];
+        sum = AddValue(
+            sum,
+            MulValue(lower[static_cast<size_t>(i * n + k)],
+                     ConjValue(lower[static_cast<size_t>(j * n + k)])));
       }
       a[static_cast<size_t>(i * n + j)] = sum;
     }
@@ -692,11 +785,11 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntimeTyped(
   std::vector<T> host_a(
       static_cast<size_t>(std::max<int64_t>(1, local_matrix_rows) *
                           std::max<int64_t>(1, local_matrix_cols)),
-      T{0});
+      ZeroValue<T>());
   std::vector<T> host_b(
       static_cast<size_t>(std::max<int64_t>(1, local_rhs_rows) *
                           std::max<int64_t>(1, local_rhs_cols)),
-      T{1});
+      MakeRealValue<T>(1.0));
   debug_log("after_host_vector_alloc");
   std::vector<T> host_input_a_rowmajor;
   std::vector<T> host_input_b;
@@ -752,7 +845,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntimeTyped(
                     debug_prefix() + "]");
       }
 
-      std::vector<T> local_input_a_rowmajor(input_a_elements, T{0});
+      std::vector<T> local_input_a_rowmajor(input_a_elements, ZeroValue<T>());
       cuda_status = cudaMemcpy(local_input_a_rowmajor.data(), input_a,
                                sizeof(T) * local_input_a_rowmajor.size(),
                                cudaMemcpyDeviceToHost);
@@ -910,7 +1003,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntimeTyped(
                     debug_prefix() + "]");
       }
 
-      std::vector<T> local_input_b(input_b_elements, T{0});
+      std::vector<T> local_input_b(input_b_elements, ZeroValue<T>());
       cuda_status = cudaMemcpy(local_input_b.data(), input_b,
                                sizeof(T) * local_input_b.size(),
                                cudaMemcpyDeviceToHost);
@@ -1092,7 +1185,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntimeTyped(
         int local_col = LocalIndexFromGlobal(
             global_i, problem.matrix_block_cols, process_col, spec.process_grid.npcol);
         host_a[static_cast<size_t>(local_row + local_col * local_matrix_rows)] =
-            static_cast<T>(global_i + 1);
+            MakeRealValue<T>(global_i + 1);
       }
     }
 
@@ -1107,7 +1200,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntimeTyped(
         }
         int local_row = LocalIndexFromGlobal(
             global_i, problem.rhs_block_rows, process_row, spec.process_grid.nprow);
-        host_b[static_cast<size_t>(local_row)] = T{1};
+        host_b[static_cast<size_t>(local_row)] = MakeRealValue<T>(1.0);
       }
     }
     debug_log("after_synthetic_local_build");
@@ -1355,7 +1448,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntimeTyped(
   }
 
   std::vector<T> solved_rhs(
-      static_cast<size_t>(problem.rhs_rows * problem.rhs_cols), T{0});
+      static_cast<size_t>(problem.rhs_rows * problem.rhs_cols), ZeroValue<T>());
   if (spec.process_count > 1)
   {
     cusolver_status = cusolverMpMatrixGatherD2H(
@@ -1450,7 +1543,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntimeTyped(
     }
 
     nccl_status = ncclBroadcast(
-        d_solved_rhs, d_solved_rhs, solved_rhs.size(), Traits::kNcclType, 0,
+        d_solved_rhs, d_solved_rhs, solved_rhs_bytes, ncclUint8, 0,
         comm, stream);
     if (nccl_status != ncclSuccess)
     {
@@ -1549,16 +1642,18 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntimeTyped(
   {
     for (int64_t row = 0; row < problem.matrix_rows; ++row)
     {
-      double accum = 0.0;
+      T accum = ZeroValue<T>();
       for (int64_t col = 0; col < problem.matrix_cols; ++col)
       {
-        accum += static_cast<double>(
-            host_input_a_rowmajor[static_cast<size_t>(row * problem.matrix_cols + col)]) *
-                 static_cast<double>(solved_rhs[static_cast<size_t>(col)]);
+        accum = AddValue(
+            accum,
+            MulValue(
+                host_input_a_rowmajor[static_cast<size_t>(row * problem.matrix_cols + col)],
+                solved_rhs[static_cast<size_t>(col)]));
       }
       residual_max_abs_error = std::max(
           residual_max_abs_error,
-          std::fabs(accum - static_cast<double>(host_input_b[static_cast<size_t>(row)])));
+          AbsValue(SubValue(accum, host_input_b[static_cast<size_t>(row)])));
     }
   }
   else
@@ -1568,8 +1663,8 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntimeTyped(
       double expected = 1.0 / static_cast<double>(global_i + 1);
       max_abs_error = std::max(
           max_abs_error,
-          std::fabs(static_cast<double>(solved_rhs[static_cast<size_t>(global_i)]) -
-                    expected));
+          AbsValue(SubValue(solved_rhs[static_cast<size_t>(global_i)],
+                            MakeRealValue<T>(expected))));
     }
   }
 
@@ -1629,8 +1724,10 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntimeTyped(
       .potrs_info = potrs_info,
       .solution_max_abs_error = max_abs_error,
       .residual_max_abs_error = residual_max_abs_error,
-      .scalar_type = std::is_same_v<T, float> ? CuSolverMpScalarType::kF32
-                                              : CuSolverMpScalarType::kF64,
+      .scalar_type = std::is_same_v<T, float>
+                         ? CuSolverMpScalarType::kF32
+                         : (std::is_same_v<T, double> ? CuSolverMpScalarType::kF64
+                                                      : CuSolverMpScalarType::kC128),
       .solved_rhs_bytes = std::move(solved_rhs_bytes),
   };
 #endif
@@ -1650,6 +1747,10 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
         error_message);
   case CuSolverMpScalarType::kF64:
     return ProbeCuSolverMpRuntimeTyped<double>(
+        spec, problem, input_a, input_a_elements, input_b, input_b_elements,
+        error_message);
+  case CuSolverMpScalarType::kC128:
+    return ProbeCuSolverMpRuntimeTyped<cuDoubleComplex>(
         spec, problem, input_a, input_a_elements, input_b, input_b_elements,
         error_message);
   }

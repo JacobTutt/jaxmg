@@ -56,6 +56,7 @@ enum class CuSolverMpScalarType
 {
   kF32,
   kF64,
+  kC128,
 };
 
 struct CuSolverMpRuntimeProbeResult

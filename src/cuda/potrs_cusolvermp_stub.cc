@@ -90,10 +90,16 @@ ffi::Error PotrsCuSolverMpDispatch(
     scalar_type = jaxmg::CuSolverMpScalarType::kF64;
     scalar_size = sizeof(double);
   }
+  else if (a.element_type() == ffi::C128 && b.element_type() == ffi::C128 &&
+           out_a->element_type() == ffi::C128 && out_b->element_type() == ffi::C128)
+  {
+    scalar_type = jaxmg::CuSolverMpScalarType::kC128;
+    scalar_size = sizeof(double) * 2;
+  }
   else
   {
     return ffi::Error::InvalidArgument(
-        "potrs_cusolvermp currently supports only homogeneous float32 or float64 inputs.");
+        "potrs_cusolvermp currently supports only homogeneous float32, float64, or complex128 inputs.");
   }
 
   jaxmg::CuSolverMpContextSpec spec{
