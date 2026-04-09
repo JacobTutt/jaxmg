@@ -93,6 +93,42 @@ bool ReadNcclUniqueIdWithRetry(
   }
   return false;
 }
+
+bool WriteFloatVector(const std::string &path, const std::vector<float> &values)
+{
+  std::ofstream out(path, std::ios::binary | std::ios::trunc);
+  if (!out)
+  {
+    return false;
+  }
+  out.write(reinterpret_cast<const char *>(values.data()),
+            static_cast<std::streamsize>(values.size() * sizeof(float)));
+  out.close();
+  return out.good();
+}
+
+bool ReadFloatVectorWithRetry(
+    const std::string &path, std::vector<float> *values, int timeout_ms)
+{
+  auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  const size_t bytes = values->size() * sizeof(float);
+  while (std::chrono::steady_clock::now() < deadline)
+  {
+    std::ifstream in(path, std::ios::binary);
+    if (in)
+    {
+      in.read(reinterpret_cast<char *>(values->data()),
+              static_cast<std::streamsize>(bytes));
+      if (static_cast<size_t>(in.gcount()) == bytes)
+      {
+        return true;
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  return false;
+}
 #endif
 
 int OwnerCoord(int global_index, int block_size, int nprocs, int src_proc = 0)
@@ -330,6 +366,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   ncclUniqueId comm_id;
   ncclResult_t nccl_status = ncclSuccess;
   std::string bootstrap_path = ResolveNcclBootstrapPath(spec);
+  std::string rhs_gather_path = bootstrap_path + ".rhs.bin";
   if (spec.process_rank == 0)
   {
     nccl_status = ncclGetUniqueId(&comm_id);
@@ -1012,23 +1049,119 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
                 " [" + debug_prefix() + "]");
   }
 
-  cuda_status = cudaMemcpy(host_b.data(), d_b, rhs_bytes, cudaMemcpyDeviceToHost);
-  if (cuda_status != cudaSuccess)
+  std::vector<float> solved_rhs(
+      static_cast<size_t>(problem.rhs_rows * problem.rhs_cols), 0.0f);
+  if (spec.process_count > 1)
   {
-    cudaFree(d_info);
-    if (d_work != nullptr)
+    cusolver_status = cusolverMpMatrixGatherD2H(
+        handle, problem.rhs_rows, problem.rhs_cols, d_b, kSubmatrixStart,
+        kSubmatrixStart, desc_b, 0, solved_rhs.data(), problem.rhs_rows);
+    if (cusolver_status != CUSOLVER_STATUS_SUCCESS)
     {
-      cudaFree(d_work);
+      cudaFree(d_info);
+      if (d_work != nullptr)
+      {
+        cudaFree(d_work);
+      }
+      cudaFree(d_b);
+      cudaFree(d_a);
+      cusolverMpDestroyMatrixDesc(desc_b);
+      cusolverMpDestroyMatrixDesc(desc_a);
+      cusolverMpDestroyGrid(grid);
+      cusolverMpDestroy(handle);
+      cudaStreamDestroy(stream);
+      ncclCommDestroy(comm);
+      return fail("cusolverMpMatrixGatherD2H(B) failed with status " +
+                  cusolver_error_string(cusolver_status) + " [" +
+                  debug_prefix() + "]");
     }
-    cudaFree(d_b);
-    cudaFree(d_a);
-    cusolverMpDestroyMatrixDesc(desc_b);
-    cusolverMpDestroyMatrixDesc(desc_a);
-    cusolverMpDestroyGrid(grid);
-    cusolverMpDestroy(handle);
-    cudaStreamDestroy(stream);
-    ncclCommDestroy(comm);
-    return fail("cudaMemcpy(solution) failed: " + cuda_error_string(cuda_status));
+    debug_log("after_gather_b");
+
+    cuda_status = cudaStreamSynchronize(stream);
+    if (cuda_status != cudaSuccess)
+    {
+      cudaFree(d_info);
+      if (d_work != nullptr)
+      {
+        cudaFree(d_work);
+      }
+      cudaFree(d_b);
+      cudaFree(d_a);
+      cusolverMpDestroyMatrixDesc(desc_b);
+      cusolverMpDestroyMatrixDesc(desc_a);
+      cusolverMpDestroyGrid(grid);
+      cusolverMpDestroy(handle);
+      cudaStreamDestroy(stream);
+      ncclCommDestroy(comm);
+      return fail("cudaStreamSynchronize(after gather) failed: " +
+                  cuda_error_string(cuda_status) + " [" + debug_prefix() + "]");
+    }
+
+    if (spec.process_rank == 0)
+    {
+      if (!WriteFloatVector(rhs_gather_path, solved_rhs))
+      {
+        cudaFree(d_info);
+        if (d_work != nullptr)
+        {
+          cudaFree(d_work);
+        }
+        cudaFree(d_b);
+        cudaFree(d_a);
+        cusolverMpDestroyMatrixDesc(desc_b);
+        cusolverMpDestroyMatrixDesc(desc_a);
+        cusolverMpDestroyGrid(grid);
+        cusolverMpDestroy(handle);
+        cudaStreamDestroy(stream);
+        ncclCommDestroy(comm);
+        return fail("failed to write gathered RHS file: " + rhs_gather_path);
+      }
+    }
+    else
+    {
+      int timeout_ms = std::stoi(
+          GetEnvOrDefault("JAXMG_CUSOLVERMP_BOOTSTRAP_TIMEOUT_MS", "10000"));
+      if (!ReadFloatVectorWithRetry(rhs_gather_path, &solved_rhs, timeout_ms))
+      {
+        cudaFree(d_info);
+        if (d_work != nullptr)
+        {
+          cudaFree(d_work);
+        }
+        cudaFree(d_b);
+        cudaFree(d_a);
+        cusolverMpDestroyMatrixDesc(desc_b);
+        cusolverMpDestroyMatrixDesc(desc_a);
+        cusolverMpDestroyGrid(grid);
+        cusolverMpDestroy(handle);
+        cudaStreamDestroy(stream);
+        ncclCommDestroy(comm);
+        return fail("timed out waiting for gathered RHS file: " + rhs_gather_path);
+      }
+    }
+  }
+  else
+  {
+    cuda_status = cudaMemcpy(
+        solved_rhs.data(), d_b, sizeof(float) * solved_rhs.size(),
+        cudaMemcpyDeviceToHost);
+    if (cuda_status != cudaSuccess)
+    {
+      cudaFree(d_info);
+      if (d_work != nullptr)
+      {
+        cudaFree(d_work);
+      }
+      cudaFree(d_b);
+      cudaFree(d_a);
+      cusolverMpDestroyMatrixDesc(desc_b);
+      cusolverMpDestroyMatrixDesc(desc_a);
+      cusolverMpDestroyGrid(grid);
+      cusolverMpDestroy(handle);
+      cudaStreamDestroy(stream);
+      ncclCommDestroy(comm);
+      return fail("cudaMemcpy(solution) failed: " + cuda_error_string(cuda_status));
+    }
   }
 
   float max_abs_error = 0.0f;
@@ -1041,7 +1174,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
       for (int64_t col = 0; col < problem.matrix_cols; ++col)
       {
         accum += host_input_a_rowmajor[static_cast<size_t>(row * problem.matrix_cols + col)] *
-                 host_b[static_cast<size_t>(col)];
+                 solved_rhs[static_cast<size_t>(col)];
       }
       residual_max_abs_error = std::max(
           residual_max_abs_error,
@@ -1050,22 +1183,12 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   }
   else
   {
-    if (local_rhs_cols > 0)
+    for (int64_t global_i = 0; global_i < problem.rhs_rows; ++global_i)
     {
-      for (int64_t global_i = 0; global_i < problem.rhs_rows; ++global_i)
-      {
-        if (OwnerCoord(global_i, problem.rhs_block_rows, spec.process_grid.nprow) !=
-            process_row)
-        {
-          continue;
-        }
-        int local_row = LocalIndexFromGlobal(
-            global_i, problem.rhs_block_rows, process_row, spec.process_grid.nprow);
-        float expected = 1.0f / static_cast<float>(global_i + 1);
-        max_abs_error = std::max(
-            max_abs_error,
-            std::fabs(host_b[static_cast<size_t>(local_row)] - expected));
-      }
+      float expected = 1.0f / static_cast<float>(global_i + 1);
+      max_abs_error = std::max(
+          max_abs_error,
+          std::fabs(solved_rhs[static_cast<size_t>(global_i)] - expected));
     }
   }
 
@@ -1119,7 +1242,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
       .potrs_info = potrs_info,
       .solution_max_abs_error = max_abs_error,
       .residual_max_abs_error = residual_max_abs_error,
-      .solved_rhs = host_b,
+      .solved_rhs = std::move(solved_rhs),
   };
 #endif
 }
