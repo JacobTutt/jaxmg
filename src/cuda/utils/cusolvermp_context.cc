@@ -1627,10 +1627,10 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntimeTyped(
       .potrs_workspace_host_bytes = potrs_workspace_host_bytes,
       .potrf_info = potrf_info,
       .potrs_info = potrs_info,
-      .scalar_type = std::is_same_v<T, float> ? CuSolverMpScalarType::kF32
-                                              : CuSolverMpScalarType::kF64,
       .solution_max_abs_error = max_abs_error,
       .residual_max_abs_error = residual_max_abs_error,
+      .scalar_type = std::is_same_v<T, float> ? CuSolverMpScalarType::kF32
+                                              : CuSolverMpScalarType::kF64,
       .solved_rhs_bytes = std::move(solved_rhs_bytes),
   };
 #endif

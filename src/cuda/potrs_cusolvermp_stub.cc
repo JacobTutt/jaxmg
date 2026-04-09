@@ -76,18 +76,18 @@ ffi::Error PotrsCuSolverMpDispatch(
   (void)stream;
   (void)scratch;
 
-  CuSolverMpScalarType scalar_type;
+  jaxmg::CuSolverMpScalarType scalar_type;
   size_t scalar_size = 0;
   if (a.element_type() == ffi::F32 && b.element_type() == ffi::F32 &&
       out_a->element_type() == ffi::F32 && out_b->element_type() == ffi::F32)
   {
-    scalar_type = CuSolverMpScalarType::kF32;
+    scalar_type = jaxmg::CuSolverMpScalarType::kF32;
     scalar_size = sizeof(float);
   }
   else if (a.element_type() == ffi::F64 && b.element_type() == ffi::F64 &&
            out_a->element_type() == ffi::F64 && out_b->element_type() == ffi::F64)
   {
-    scalar_type = CuSolverMpScalarType::kF64;
+    scalar_type = jaxmg::CuSolverMpScalarType::kF64;
     scalar_size = sizeof(double);
   }
   else
