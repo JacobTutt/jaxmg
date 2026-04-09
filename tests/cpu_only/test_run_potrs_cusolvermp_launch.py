@@ -1,6 +1,8 @@
-import os
-
-from tests.mpmd.run_potrs_cusolvermp import LaunchConfig, _resolve_launch_config
+from tests.mpmd.run_potrs_cusolvermp import (
+    LaunchConfig,
+    _resolve_launch_config,
+    _resolve_task_local_device_id,
+)
 
 
 def test_resolve_launch_config_from_argv(monkeypatch):
@@ -42,3 +44,13 @@ def test_resolve_launch_config_from_env(monkeypatch):
         task_name="diag_row_sharded",
         task_dtype_name="float64",
     )
+
+
+def test_masked_visible_device_normalizes_to_local_zero(monkeypatch):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "7")
+    assert _resolve_task_local_device_id(1) == 0
+
+
+def test_multi_visible_devices_keep_default_local_ordinal(monkeypatch):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "3,5")
+    assert _resolve_task_local_device_id(1) == 1

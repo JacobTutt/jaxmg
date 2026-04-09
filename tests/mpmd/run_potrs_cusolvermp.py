@@ -22,13 +22,27 @@ class LaunchConfig:
     task_dtype_name: str
 
 
+def _resolve_task_local_device_id(default_id: int) -> int:
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    if not visible:
+        return default_id
+
+    visible_ids = [part.strip() for part in visible.split(",") if part.strip()]
+    if len(visible_ids) == 1:
+        return 0
+
+    return default_id
+
+
 def _resolve_launch_config(argv: List[str]) -> LaunchConfig:
     if len(argv) >= 6:
         return LaunchConfig(
             coordinator_address=argv[1],
             process_id=int(argv[2]),
             num_processes=int(argv[3]),
-            local_device_id=int(os.environ.get("SLURM_LOCALID", argv[2])),
+            local_device_id=_resolve_task_local_device_id(
+                int(os.environ.get("SLURM_LOCALID", argv[2]))
+            ),
             task_name=argv[4],
             task_dtype_name=argv[5],
         )
@@ -37,7 +51,9 @@ def _resolve_launch_config(argv: List[str]) -> LaunchConfig:
         coordinator_address=os.environ["JAX_COORDINATOR_ADDRESS"],
         process_id=int(os.environ["SLURM_PROCID"]),
         num_processes=int(os.environ["SLURM_NTASKS"]),
-        local_device_id=int(os.environ.get("SLURM_LOCALID", "0")),
+        local_device_id=_resolve_task_local_device_id(
+            int(os.environ.get("SLURM_LOCALID", "0"))
+        ),
         task_name=os.environ["JAXMG_MPTEST_NAME"],
         task_dtype_name=os.environ["JAXMG_MPTEST_DTYPE"],
     )
