@@ -887,7 +887,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntimeTyped(
           GetEnvOrDefault("JAXMG_CUSOLVERMP_BOOTSTRAP_TIMEOUT_MS", "10000"));
       if (spec.process_rank == 0)
       {
-        host_input_a_rowmajor.assign(full_a_elements, 0.0f);
+        host_input_a_rowmajor.assign(full_a_elements, ZeroValue<T>());
         int64_t row_offset = 0;
         for (int rank = 0; rank < spec.process_count; ++rank)
         {
@@ -1020,7 +1020,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntimeTyped(
         return fail("cudaMemcpy(local input b) failed: " +
                     cuda_error_string(cuda_status));
       }
-      host_input_b.assign(full_b_elements, 0.0f);
+      host_input_b.assign(full_b_elements, ZeroValue<T>());
       std::copy(local_input_b.begin(), local_input_b.end(), host_input_b.begin());
     }
 
