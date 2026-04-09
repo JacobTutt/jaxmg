@@ -1,4 +1,5 @@
 #include "include/cusolvermp_context.h"
+#include "include/cusolvermp_pack.h"
 
 #include <algorithm>
 #include <chrono>
@@ -795,12 +796,39 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntimeTyped(
   std::vector<T> host_input_b;
   bool use_input_buffers = input_a != nullptr && input_b != nullptr &&
                            !EnvFlagEnabled("JAXMG_CUSOLVERMP_USE_SYNTHETIC_LOCAL");
+  bool used_gpu_input_pack = false;
   auto debug_prefix = [&]() {
     return MultiRankDebugPrefix(spec, problem, local_matrix_rows,
                                 local_matrix_cols, local_rhs_rows,
                                 local_rhs_cols, use_input_buffers);
   };
-  if (use_input_buffers)
+  if (use_input_buffers && spec.process_count > 1 &&
+      !EnvFlagEnabled("JAXMG_CUSOLVERMP_DISABLE_DIRECT_GPU_PACK"))
+  {
+    CuSolverMpGpuPackResult gpu_pack = TryPackCuSolverMpInputsGpu(
+        scalar_type, spec, problem, input_a, input_a_elements, input_b,
+        input_b_elements, d_a, local_matrix_rows, local_matrix_cols, d_b,
+        local_rhs_rows, local_rhs_cols, comm, stream);
+    if (!gpu_pack.error_message.empty())
+    {
+      cudaFree(d_b);
+      cudaFree(d_a);
+      cusolverMpDestroyMatrixDesc(desc_b);
+      cusolverMpDestroyMatrixDesc(desc_a);
+      cusolverMpDestroyGrid(grid);
+      cusolverMpDestroy(handle);
+      cudaStreamDestroy(stream);
+      ncclCommDestroy(comm);
+      return fail(gpu_pack.error_message + " [" + debug_prefix() + "]");
+    }
+    if (gpu_pack.applied)
+    {
+      used_gpu_input_pack = true;
+      debug_log("after_gpu_input_pack");
+    }
+  }
+
+  if (use_input_buffers && !used_gpu_input_pack)
   {
     const size_t full_a_elements =
         static_cast<size_t>(problem.matrix_rows * problem.matrix_cols);
@@ -1137,7 +1165,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntimeTyped(
       }
     }
   }
-  else
+  else if (!used_gpu_input_pack)
   {
     debug_log("before_synthetic_local_build");
     if (EnvFlagEnabled("JAXMG_CUSOLVERMP_USE_DENSE_SYNTHETIC"))
