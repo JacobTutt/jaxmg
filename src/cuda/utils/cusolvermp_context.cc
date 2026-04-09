@@ -288,6 +288,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   {
     return fail("cudaSetDevice failed: " + cuda_error_string(cuda_status));
   }
+  bool potrf_only = EnvFlagEnabled("JAXMG_CUSOLVERMP_POTRF_ONLY");
 
   int device_id = -1;
   cuda_status = cudaGetDevice(&device_id);
@@ -465,23 +466,26 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
 
   size_t potrs_workspace_device_bytes = 0;
   size_t potrs_workspace_host_bytes = 0;
-  cusolver_status = cusolverMpPotrs_bufferSize(
-      handle, CUBLAS_FILL_MODE_LOWER, problem.matrix_rows, problem.rhs_cols,
-      d_a, kSubmatrixStart, kSubmatrixStart, desc_a, d_b, kSubmatrixStart,
-      kSubmatrixStart, desc_b, CUDA_R_32F, &potrs_workspace_device_bytes,
-      &potrs_workspace_host_bytes);
-  if (cusolver_status != CUSOLVER_STATUS_SUCCESS)
+  if (!potrf_only)
   {
-    cudaFree(d_b);
-    cudaFree(d_a);
-    cusolverMpDestroyMatrixDesc(desc_b);
-    cusolverMpDestroyMatrixDesc(desc_a);
-    cusolverMpDestroyGrid(grid);
-    cusolverMpDestroy(handle);
-    cudaStreamDestroy(stream);
-    ncclCommDestroy(comm);
-    return fail("cusolverMpPotrs_bufferSize failed with status " +
-                cusolver_error_string(cusolver_status));
+    cusolver_status = cusolverMpPotrs_bufferSize(
+        handle, CUBLAS_FILL_MODE_LOWER, problem.matrix_rows, problem.rhs_cols,
+        d_a, kSubmatrixStart, kSubmatrixStart, desc_a, d_b, kSubmatrixStart,
+        kSubmatrixStart, desc_b, CUDA_R_32F, &potrs_workspace_device_bytes,
+        &potrs_workspace_host_bytes);
+    if (cusolver_status != CUSOLVER_STATUS_SUCCESS)
+    {
+      cudaFree(d_b);
+      cudaFree(d_a);
+      cusolverMpDestroyMatrixDesc(desc_b);
+      cusolverMpDestroyMatrixDesc(desc_a);
+      cusolverMpDestroyGrid(grid);
+      cusolverMpDestroy(handle);
+      cudaStreamDestroy(stream);
+      ncclCommDestroy(comm);
+      return fail("cusolverMpPotrs_bufferSize failed with status " +
+                  cusolver_error_string(cusolver_status));
+    }
   }
   debug_log("after_workspace_queries");
   if (StopAtStage("after_workspace_queries"))
@@ -750,7 +754,9 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     }
   }
 
-  size_t work_bytes = std::max(potrf_workspace_device_bytes, potrs_workspace_device_bytes);
+  size_t work_bytes = potrf_only ? potrf_workspace_device_bytes
+                                 : std::max(potrf_workspace_device_bytes,
+                                            potrs_workspace_device_bytes);
   if (work_bytes > 0)
   {
     debug_log("before_cudaMalloc_workspace");
@@ -774,7 +780,9 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     }
   }
 
-  size_t host_work_bytes = std::max(potrf_workspace_host_bytes, potrs_workspace_host_bytes);
+  size_t host_work_bytes = potrf_only ? potrf_workspace_host_bytes
+                                      : std::max(potrf_workspace_host_bytes,
+                                                 potrs_workspace_host_bytes);
   std::vector<char> h_work(host_work_bytes);
 
   debug_log("before_cudaMalloc_info");
@@ -862,6 +870,24 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     ncclCommDestroy(comm);
     return fail("cusolverMpPotrf completed with info=" + std::to_string(potrf_info) +
                 " [" + debug_prefix() + "]");
+  }
+  if (StopAtStage("after_potrf_info") || potrf_only)
+  {
+    cudaFree(d_info);
+    if (d_work != nullptr)
+    {
+      cudaFree(d_work);
+    }
+    cudaFree(d_b);
+    cudaFree(d_a);
+    cusolverMpDestroyMatrixDesc(desc_b);
+    cusolverMpDestroyMatrixDesc(desc_a);
+    cusolverMpDestroyGrid(grid);
+    cusolverMpDestroy(handle);
+    cudaStreamDestroy(stream);
+    ncclCommDestroy(comm);
+    return fail(potrf_only ? "stopped after potrf-only run"
+                           : "stopped after potrf info");
   }
 
   cusolver_status = cusolverMpPotrs(
