@@ -15,10 +15,11 @@ if "gpu" not in platforms:
     pytest.skip("No GPUs found. Skipping", allow_module_level=True)
 
 
+@pytest.mark.parametrize("name", ["diag", "diag_row_sharded"])
 @pytest.mark.parametrize("dtype_name", ["float32"])
-def test_potrs_cusolvermp_diag_multirank(dtype_name):
+def test_potrs_cusolvermp_diag_multirank(name, dtype_name):
     gpu_count = jax.device_count()
     if gpu_count != 2:
         pytest.skip(f"Need exactly 2 visible GPUs for this regression (have {gpu_count})")
 
-    run_mpmd_test(MP_TEST, requested_procs=2, name="diag", dtype_name=dtype_name)
+    run_mpmd_test(MP_TEST, requested_procs=2, name=name, dtype_name=dtype_name)

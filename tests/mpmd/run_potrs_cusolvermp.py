@@ -8,7 +8,7 @@ from typing import Callable, Dict, List
 import jax
 import jax.distributed
 import jax.numpy as jnp
-from jax.sharding import PartitionSpec as P
+from jax.sharding import NamedSharding, PartitionSpec as P
 
 coord_addr = sys.argv[1]
 proc_id = int(sys.argv[2])
@@ -38,6 +38,18 @@ def _println(prefix: str, payload: dict):
 def _solve_diag(dtype):
     a = jnp.diag(jnp.arange(1, 5, dtype=dtype))
     b = jnp.ones((4,), dtype=dtype)
+    return _run_diag_solve(a, b, dtype)
+
+
+def _solve_diag_row_sharded(dtype):
+    a = jnp.diag(jnp.arange(1, 5, dtype=dtype))
+    b = jnp.ones((4,), dtype=dtype)
+    a = jax.device_put(a, NamedSharding(mesh, P("x", None)))
+    b = jax.device_put(b, NamedSharding(mesh, P(None)))
+    return _run_diag_solve(a, b, dtype)
+
+
+def _run_diag_solve(a, b, dtype):
     out, status = potrs(
         a,
         b,
@@ -67,7 +79,10 @@ def _solve_diag(dtype):
 
 
 def _build_registry() -> Dict[str, Callable]:
-    return {"diag": _solve_diag}
+    return {
+        "diag": _solve_diag,
+        "diag_row_sharded": _solve_diag_row_sharded,
+    }
 
 
 def main(argv: List[str]):
