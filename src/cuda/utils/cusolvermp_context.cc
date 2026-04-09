@@ -802,11 +802,14 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntimeTyped(
                                 local_matrix_cols, local_rhs_rows,
                                 local_rhs_cols, use_input_buffers);
   };
+  constexpr int gpu_pack_scalar_type_tag = std::is_same_v<T, float>
+                                               ? 0
+                                               : (std::is_same_v<T, double> ? 1 : 2);
   if (use_input_buffers && spec.process_count > 1 &&
       !EnvFlagEnabled("JAXMG_CUSOLVERMP_DISABLE_DIRECT_GPU_PACK"))
   {
     CuSolverMpGpuPackResult gpu_pack = TryPackCuSolverMpInputsGpu(
-        static_cast<int>(scalar_type), spec.process_rank, spec.process_count,
+        gpu_pack_scalar_type_tag, spec.process_rank, spec.process_count,
         spec.process_grid.nprow, spec.process_grid.npcol, problem.matrix_rows,
         problem.matrix_cols, problem.rhs_rows, problem.rhs_cols,
         problem.matrix_block_rows, problem.matrix_block_cols,
