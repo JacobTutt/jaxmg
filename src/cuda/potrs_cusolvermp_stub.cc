@@ -133,7 +133,8 @@ ffi::Error PotrsCuSolverMpDispatch(
 #if defined(JAXMG_HAVE_CUSOLVERMP) && defined(JAXMG_HAVE_NCCL)
   std::string probe_error;
   auto probe = jaxmg::ProbeCuSolverMpRuntime(
-      spec, problem, a.untyped_data(), b.untyped_data(), &probe_error);
+      spec, problem, a.untyped_data(), a.size_bytes() / sizeof(float),
+      b.untyped_data(), b.size_bytes() / sizeof(float), &probe_error);
   if (!probe.has_value())
   {
     return ffi::Error::InvalidArgument(

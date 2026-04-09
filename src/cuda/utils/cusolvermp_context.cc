@@ -129,6 +129,60 @@ bool ReadFloatVectorWithRetry(
   }
   return false;
 }
+
+bool WriteFloatMatrixChunk(
+    const std::string &path, int64_t rows, int64_t cols,
+    const std::vector<float> &values)
+{
+  std::ofstream out(path, std::ios::binary | std::ios::trunc);
+  if (!out)
+  {
+    return false;
+  }
+  out.write(reinterpret_cast<const char *>(&rows), sizeof(rows));
+  out.write(reinterpret_cast<const char *>(&cols), sizeof(cols));
+  out.write(reinterpret_cast<const char *>(values.data()),
+            static_cast<std::streamsize>(values.size() * sizeof(float)));
+  out.close();
+  return out.good();
+}
+
+bool ReadFloatMatrixChunkWithRetry(
+    const std::string &path, int64_t *rows, int64_t *cols,
+    std::vector<float> *values, int timeout_ms)
+{
+  auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  while (std::chrono::steady_clock::now() < deadline)
+  {
+    std::ifstream in(path, std::ios::binary);
+    if (in)
+    {
+      int64_t local_rows = 0;
+      int64_t local_cols = 0;
+      in.read(reinterpret_cast<char *>(&local_rows), sizeof(local_rows));
+      in.read(reinterpret_cast<char *>(&local_cols), sizeof(local_cols));
+      if (!in)
+      {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        continue;
+      }
+      std::vector<float> local_values(
+          static_cast<size_t>(local_rows * local_cols), 0.0f);
+      in.read(reinterpret_cast<char *>(local_values.data()),
+              static_cast<std::streamsize>(local_values.size() * sizeof(float)));
+      if (static_cast<size_t>(in.gcount()) == local_values.size() * sizeof(float))
+      {
+        *rows = local_rows;
+        *cols = local_cols;
+        *values = std::move(local_values);
+        return true;
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  return false;
+}
 #endif
 
 int OwnerCoord(int global_index, int block_size, int nprocs, int src_proc = 0)
@@ -305,7 +359,8 @@ std::vector<std::string> CuSolverMpPotrsStubContractIssues(
 
 std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     const CuSolverMpContextSpec &spec, const CuSolverMpPotrsProblemSpec &problem,
-    const void *input_a, const void *input_b, std::string *error_message)
+    const void *input_a, size_t input_a_elements, const void *input_b,
+    size_t input_b_elements, std::string *error_message)
 {
 #if !(defined(JAXMG_HAVE_CUSOLVERMP) && defined(JAXMG_HAVE_NCCL))
   if (error_message != nullptr)
@@ -592,39 +647,226 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   };
   if (use_input_buffers)
   {
-    host_input_a_rowmajor.resize(static_cast<size_t>(problem.matrix_rows * problem.matrix_cols));
-    host_input_b.resize(static_cast<size_t>(problem.rhs_rows * problem.rhs_cols));
+    const size_t full_a_elements =
+        static_cast<size_t>(problem.matrix_rows * problem.matrix_cols);
+    const size_t full_b_elements =
+        static_cast<size_t>(problem.rhs_rows * problem.rhs_cols);
+    const bool a_is_full = input_a_elements == full_a_elements;
+    const bool b_is_full = input_b_elements == full_b_elements;
 
-    cuda_status = cudaMemcpy(host_input_a_rowmajor.data(), input_a,
-                             sizeof(float) * host_input_a_rowmajor.size(),
-                             cudaMemcpyDeviceToHost);
-    if (cuda_status != cudaSuccess)
+    if (a_is_full)
     {
-      cudaFree(d_b);
-      cudaFree(d_a);
-      cusolverMpDestroyMatrixDesc(desc_b);
-      cusolverMpDestroyMatrixDesc(desc_a);
-      cusolverMpDestroyGrid(grid);
-      cusolverMpDestroy(handle);
-      cudaStreamDestroy(stream);
-      ncclCommDestroy(comm);
-      return fail("cudaMemcpy(input A) failed: " + cuda_error_string(cuda_status));
+      host_input_a_rowmajor.resize(full_a_elements);
+      cuda_status = cudaMemcpy(host_input_a_rowmajor.data(), input_a,
+                               sizeof(float) * host_input_a_rowmajor.size(),
+                               cudaMemcpyDeviceToHost);
+      if (cuda_status != cudaSuccess)
+      {
+        cudaFree(d_b);
+        cudaFree(d_a);
+        cusolverMpDestroyMatrixDesc(desc_b);
+        cusolverMpDestroyMatrixDesc(desc_a);
+        cusolverMpDestroyGrid(grid);
+        cusolverMpDestroy(handle);
+        cudaStreamDestroy(stream);
+        ncclCommDestroy(comm);
+        return fail("cudaMemcpy(input A) failed: " + cuda_error_string(cuda_status));
+      }
+    }
+    else
+    {
+      if (input_a_elements == 0 ||
+          input_a_elements % static_cast<size_t>(problem.matrix_cols) != 0)
+      {
+        cudaFree(d_b);
+        cudaFree(d_a);
+        cusolverMpDestroyMatrixDesc(desc_b);
+        cusolverMpDestroyMatrixDesc(desc_a);
+        cusolverMpDestroyGrid(grid);
+        cusolverMpDestroy(handle);
+        cudaStreamDestroy(stream);
+        ncclCommDestroy(comm);
+        return fail("input A does not match a full or row-sharded matrix layout [" +
+                    debug_prefix() + "]");
+      }
+
+      std::vector<float> local_input_a_rowmajor(input_a_elements, 0.0f);
+      cuda_status = cudaMemcpy(local_input_a_rowmajor.data(), input_a,
+                               sizeof(float) * local_input_a_rowmajor.size(),
+                               cudaMemcpyDeviceToHost);
+      if (cuda_status != cudaSuccess)
+      {
+        cudaFree(d_b);
+        cudaFree(d_a);
+        cusolverMpDestroyMatrixDesc(desc_b);
+        cusolverMpDestroyMatrixDesc(desc_a);
+        cusolverMpDestroyGrid(grid);
+        cusolverMpDestroy(handle);
+        cudaStreamDestroy(stream);
+        ncclCommDestroy(comm);
+        return fail("cudaMemcpy(local input A) failed: " +
+                    cuda_error_string(cuda_status));
+      }
+
+      const int64_t local_input_a_rows =
+          static_cast<int64_t>(input_a_elements / static_cast<size_t>(problem.matrix_cols));
+      const std::string a_chunk_path =
+          bootstrap_path + ".input_a.rank" + std::to_string(spec.process_rank) + ".bin";
+      if (!WriteFloatMatrixChunk(
+              a_chunk_path, local_input_a_rows, problem.matrix_cols,
+              local_input_a_rowmajor))
+      {
+        cudaFree(d_b);
+        cudaFree(d_a);
+        cusolverMpDestroyMatrixDesc(desc_b);
+        cusolverMpDestroyMatrixDesc(desc_a);
+        cusolverMpDestroyGrid(grid);
+        cusolverMpDestroy(handle);
+        cudaStreamDestroy(stream);
+        ncclCommDestroy(comm);
+        return fail("failed to write local input A chunk: " + a_chunk_path);
+      }
+
+      const std::string gathered_a_path = bootstrap_path + ".input_a.global.bin";
+      const int timeout_ms = std::stoi(
+          GetEnvOrDefault("JAXMG_CUSOLVERMP_BOOTSTRAP_TIMEOUT_MS", "10000"));
+      if (spec.process_rank == 0)
+      {
+        host_input_a_rowmajor.assign(full_a_elements, 0.0f);
+        int64_t row_offset = 0;
+        for (int rank = 0; rank < spec.process_count; ++rank)
+        {
+          int64_t chunk_rows = 0;
+          int64_t chunk_cols = 0;
+          std::vector<float> chunk_values;
+          const std::string rank_chunk_path =
+              bootstrap_path + ".input_a.rank" + std::to_string(rank) + ".bin";
+          if (!ReadFloatMatrixChunkWithRetry(
+                  rank_chunk_path, &chunk_rows, &chunk_cols, &chunk_values, timeout_ms))
+          {
+            cudaFree(d_b);
+            cudaFree(d_a);
+            cusolverMpDestroyMatrixDesc(desc_b);
+            cusolverMpDestroyMatrixDesc(desc_a);
+            cusolverMpDestroyGrid(grid);
+            cusolverMpDestroy(handle);
+            cudaStreamDestroy(stream);
+            ncclCommDestroy(comm);
+            return fail("timed out waiting for local input A chunk: " +
+                        rank_chunk_path);
+          }
+          if (chunk_cols != problem.matrix_cols ||
+              row_offset + chunk_rows > problem.matrix_rows)
+          {
+            cudaFree(d_b);
+            cudaFree(d_a);
+            cusolverMpDestroyMatrixDesc(desc_b);
+            cusolverMpDestroyMatrixDesc(desc_a);
+            cusolverMpDestroyGrid(grid);
+            cusolverMpDestroy(handle);
+            cudaStreamDestroy(stream);
+            ncclCommDestroy(comm);
+            return fail("row-sharded input A chunk metadata is inconsistent [" +
+                        debug_prefix() + "]");
+          }
+          std::copy(
+              chunk_values.begin(), chunk_values.end(),
+              host_input_a_rowmajor.begin() +
+                  static_cast<ptrdiff_t>(row_offset * problem.matrix_cols));
+          row_offset += chunk_rows;
+        }
+        if (row_offset != problem.matrix_rows ||
+            !WriteFloatMatrixChunk(
+                gathered_a_path, problem.matrix_rows, problem.matrix_cols,
+                host_input_a_rowmajor))
+        {
+          cudaFree(d_b);
+          cudaFree(d_a);
+          cusolverMpDestroyMatrixDesc(desc_b);
+          cusolverMpDestroyMatrixDesc(desc_a);
+          cusolverMpDestroyGrid(grid);
+          cusolverMpDestroy(handle);
+          cudaStreamDestroy(stream);
+          ncclCommDestroy(comm);
+          return fail("failed to assemble gathered input A: " + gathered_a_path);
+        }
+      }
+      else
+      {
+        int64_t gathered_rows = problem.matrix_rows;
+        int64_t gathered_cols = problem.matrix_cols;
+        if (!ReadFloatMatrixChunkWithRetry(
+                gathered_a_path, &gathered_rows, &gathered_cols,
+                &host_input_a_rowmajor, timeout_ms))
+        {
+          cudaFree(d_b);
+          cudaFree(d_a);
+          cusolverMpDestroyMatrixDesc(desc_b);
+          cusolverMpDestroyMatrixDesc(desc_a);
+          cusolverMpDestroyGrid(grid);
+          cusolverMpDestroy(handle);
+          cudaStreamDestroy(stream);
+          ncclCommDestroy(comm);
+          return fail("timed out waiting for gathered input A: " + gathered_a_path);
+        }
+      }
     }
 
-    cuda_status = cudaMemcpy(host_input_b.data(), input_b,
-                             sizeof(float) * host_input_b.size(),
-                             cudaMemcpyDeviceToHost);
-    if (cuda_status != cudaSuccess)
+    if (b_is_full)
     {
-      cudaFree(d_b);
-      cudaFree(d_a);
-      cusolverMpDestroyMatrixDesc(desc_b);
-      cusolverMpDestroyMatrixDesc(desc_a);
-      cusolverMpDestroyGrid(grid);
-      cusolverMpDestroy(handle);
-      cudaStreamDestroy(stream);
-      ncclCommDestroy(comm);
-      return fail("cudaMemcpy(input b) failed: " + cuda_error_string(cuda_status));
+      host_input_b.resize(full_b_elements);
+      cuda_status = cudaMemcpy(host_input_b.data(), input_b,
+                               sizeof(float) * host_input_b.size(),
+                               cudaMemcpyDeviceToHost);
+      if (cuda_status != cudaSuccess)
+      {
+        cudaFree(d_b);
+        cudaFree(d_a);
+        cusolverMpDestroyMatrixDesc(desc_b);
+        cusolverMpDestroyMatrixDesc(desc_a);
+        cusolverMpDestroyGrid(grid);
+        cusolverMpDestroy(handle);
+        cudaStreamDestroy(stream);
+        ncclCommDestroy(comm);
+        return fail("cudaMemcpy(input b) failed: " + cuda_error_string(cuda_status));
+      }
+    }
+    else
+    {
+      if (input_b_elements == 0 ||
+          input_b_elements % static_cast<size_t>(problem.rhs_cols) != 0)
+      {
+        cudaFree(d_b);
+        cudaFree(d_a);
+        cusolverMpDestroyMatrixDesc(desc_b);
+        cusolverMpDestroyMatrixDesc(desc_a);
+        cusolverMpDestroyGrid(grid);
+        cusolverMpDestroy(handle);
+        cudaStreamDestroy(stream);
+        ncclCommDestroy(comm);
+        return fail("input b does not match a full or row-sharded rhs layout [" +
+                    debug_prefix() + "]");
+      }
+
+      std::vector<float> local_input_b(input_b_elements, 0.0f);
+      cuda_status = cudaMemcpy(local_input_b.data(), input_b,
+                               sizeof(float) * local_input_b.size(),
+                               cudaMemcpyDeviceToHost);
+      if (cuda_status != cudaSuccess)
+      {
+        cudaFree(d_b);
+        cudaFree(d_a);
+        cusolverMpDestroyMatrixDesc(desc_b);
+        cusolverMpDestroyMatrixDesc(desc_a);
+        cusolverMpDestroyGrid(grid);
+        cusolverMpDestroy(handle);
+        cudaStreamDestroy(stream);
+        ncclCommDestroy(comm);
+        return fail("cudaMemcpy(local input b) failed: " +
+                    cuda_error_string(cuda_status));
+      }
+      host_input_b.assign(full_b_elements, 0.0f);
+      std::copy(local_input_b.begin(), local_input_b.end(), host_input_b.begin());
     }
 
     if (spec.process_count > 1)

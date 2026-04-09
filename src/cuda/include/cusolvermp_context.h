@@ -85,7 +85,8 @@ std::vector<std::string> CuSolverMpPotrsStubContractIssues(
 
 std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     const CuSolverMpContextSpec &spec, const CuSolverMpPotrsProblemSpec &problem,
-    const void *input_a, const void *input_b, std::string *error_message);
+    const void *input_a, size_t input_a_elements, const void *input_b,
+    size_t input_b_elements, std::string *error_message);
 
 } // namespace jaxmg
 
