@@ -54,6 +54,7 @@ def _submit_same_node_slurm_case(name: str, dtype_name: str) -> tuple[str, str]:
         conda activate {env_root}
         export LD_LIBRARY_PATH="$CONDA_PREFIX/lib${{LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}}"
         export XLA_PYTHON_CLIENT_PREALLOCATE=false
+        export JAX_ENABLE_X64=1
         export JAXMG_BACKEND_FAMILY=mp
         export JAXMG_ENABLE_REAL_CUSOLVERMP=1
         unset JAXMG_ENABLE_MP_STUB
