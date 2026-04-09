@@ -21,11 +21,16 @@ def plan_distributed_runtime(
     mesh: Mesh, process_grid: Tuple[int, int] | None = None
 ) -> DistributedRuntimePlan:
     """Capture the distributed runtime facts the future cuSOLVERMp path will need."""
-    global_device_count = mesh.devices.size
+    global_device_count = jax.device_count()
     process_count = jax.process_count()
     process_index = jax.process_index()
     local_device_count = jax.local_device_count()
-    local_device_index = jax.local_devices()[0].id
+    local_device_index = 0
+    if local_device_count > 0:
+        local_device = jax.local_devices()[0]
+        local_device_index = getattr(local_device, "local_hardware_id", None)
+        if local_device_index is None:
+            local_device_index = 0
 
     if process_count <= 0:
         raise ValueError("jax.process_count() must be positive.")

@@ -11,8 +11,10 @@ def test_plan_distributed_runtime_uses_mesh_device_count():
     assert plan.process_count == jax.process_count()
     assert plan.process_index == jax.process_index()
     assert plan.local_device_count == jax.local_device_count()
-    assert plan.local_device_index == jax.local_devices()[0].id
-    assert plan.global_device_count == mesh.devices.size
+    assert plan.local_device_index == (
+        getattr(jax.local_devices()[0], "local_hardware_id", None) or 0
+    )
+    assert plan.global_device_count == jax.device_count()
     assert plan.process_grid == (1, 1)
 
 
