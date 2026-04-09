@@ -52,6 +52,12 @@ struct CuSolverMpPotrsProblemSpec
   int64_t rhs_block_cols;
 };
 
+enum class CuSolverMpScalarType
+{
+  kF32,
+  kF64,
+};
+
 struct CuSolverMpRuntimeProbeResult
 {
   int cuda_device_id;
@@ -67,9 +73,10 @@ struct CuSolverMpRuntimeProbeResult
   size_t potrs_workspace_host_bytes;
   int potrf_info;
   int potrs_info;
-  float solution_max_abs_error;
-  float residual_max_abs_error;
-  std::vector<float> solved_rhs;
+  double solution_max_abs_error;
+  double residual_max_abs_error;
+  CuSolverMpScalarType scalar_type;
+  std::vector<std::byte> solved_rhs_bytes;
 };
 
 CuSolverMpContextPlan BuildCuSolverMpContextPlan();
@@ -84,9 +91,10 @@ std::vector<std::string> CuSolverMpPotrsStubContractIssues(
     int matrix_block_cols, int rhs_block_rows, int rhs_block_cols);
 
 std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
-    const CuSolverMpContextSpec &spec, const CuSolverMpPotrsProblemSpec &problem,
-    const void *input_a, size_t input_a_elements, const void *input_b,
-    size_t input_b_elements, std::string *error_message);
+    CuSolverMpScalarType scalar_type, const CuSolverMpContextSpec &spec,
+    const CuSolverMpPotrsProblemSpec &problem, const void *input_a,
+    size_t input_a_elements, const void *input_b, size_t input_b_elements,
+    std::string *error_message);
 
 } // namespace jaxmg
 

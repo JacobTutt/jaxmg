@@ -3,12 +3,14 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <thread>
+#include <type_traits>
 #include <unistd.h>
 #include <vector>
 
@@ -63,6 +65,25 @@ bool StopAtStage(const char *stage)
 }
 
 #if defined(JAXMG_HAVE_CUSOLVERMP) && defined(JAXMG_HAVE_NCCL)
+template <typename T>
+struct CuSolverMpTypeTraits;
+
+template <>
+struct CuSolverMpTypeTraits<float>
+{
+  static constexpr cudaDataType_t kCudaType = CUDA_R_32F;
+  static constexpr ncclDataType_t kNcclType = ncclFloat32;
+  static constexpr const char *kName = "float32";
+};
+
+template <>
+struct CuSolverMpTypeTraits<double>
+{
+  static constexpr cudaDataType_t kCudaType = CUDA_R_64F;
+  static constexpr ncclDataType_t kNcclType = ncclFloat64;
+  static constexpr const char *kName = "float64";
+};
+
 int GetNcclBootstrapTimeoutMs()
 {
   return std::stoi(
@@ -129,7 +150,8 @@ bool ReadNcclUniqueIdWithRetry(
   return false;
 }
 
-bool WriteFloatVector(const std::string &path, const std::vector<float> &values)
+template <typename T>
+bool WriteTypedVector(const std::string &path, const std::vector<T> &values)
 {
   std::ofstream out(path, std::ios::binary | std::ios::trunc);
   if (!out)
@@ -137,17 +159,18 @@ bool WriteFloatVector(const std::string &path, const std::vector<float> &values)
     return false;
   }
   out.write(reinterpret_cast<const char *>(values.data()),
-            static_cast<std::streamsize>(values.size() * sizeof(float)));
+            static_cast<std::streamsize>(values.size() * sizeof(T)));
   out.close();
   return out.good();
 }
 
-bool ReadFloatVectorWithRetry(
-    const std::string &path, std::vector<float> *values, int timeout_ms)
+template <typename T>
+bool ReadTypedVectorWithRetry(
+    const std::string &path, std::vector<T> *values, int timeout_ms)
 {
   auto deadline =
       std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-  const size_t bytes = values->size() * sizeof(float);
+  const size_t bytes = values->size() * sizeof(T);
   while (std::chrono::steady_clock::now() < deadline)
   {
     std::ifstream in(path, std::ios::binary);
@@ -165,9 +188,10 @@ bool ReadFloatVectorWithRetry(
   return false;
 }
 
-bool WriteFloatMatrixChunk(
+template <typename T>
+bool WriteTypedMatrixChunk(
     const std::string &path, int64_t rows, int64_t cols,
-    const std::vector<float> &values)
+    const std::vector<T> &values)
 {
   std::ofstream out(path, std::ios::binary | std::ios::trunc);
   if (!out)
@@ -177,14 +201,15 @@ bool WriteFloatMatrixChunk(
   out.write(reinterpret_cast<const char *>(&rows), sizeof(rows));
   out.write(reinterpret_cast<const char *>(&cols), sizeof(cols));
   out.write(reinterpret_cast<const char *>(values.data()),
-            static_cast<std::streamsize>(values.size() * sizeof(float)));
+            static_cast<std::streamsize>(values.size() * sizeof(T)));
   out.close();
   return out.good();
 }
 
-bool ReadFloatMatrixChunkWithRetry(
+template <typename T>
+bool ReadTypedMatrixChunkWithRetry(
     const std::string &path, int64_t *rows, int64_t *cols,
-    std::vector<float> *values, int timeout_ms)
+    std::vector<T> *values, int timeout_ms)
 {
   auto deadline =
       std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
@@ -202,11 +227,11 @@ bool ReadFloatMatrixChunkWithRetry(
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         continue;
       }
-      std::vector<float> local_values(
-          static_cast<size_t>(local_rows * local_cols), 0.0f);
+      std::vector<T> local_values(
+          static_cast<size_t>(local_rows * local_cols), T{0});
       in.read(reinterpret_cast<char *>(local_values.data()),
-              static_cast<std::streamsize>(local_values.size() * sizeof(float)));
-      if (static_cast<size_t>(in.gcount()) == local_values.size() * sizeof(float))
+              static_cast<std::streamsize>(local_values.size() * sizeof(T)));
+      if (static_cast<size_t>(in.gcount()) == local_values.size() * sizeof(T))
       {
         *rows = local_rows;
         *cols = local_cols;
@@ -235,10 +260,11 @@ int LocalIndexFromGlobal(
   return local_block_index * block_size + (global_index % block_size);
 }
 
-std::vector<float> RowMajorToColumnMajor(
-    const std::vector<float> &row_major, int64_t rows, int64_t cols)
+template <typename T>
+std::vector<T> RowMajorToColumnMajor(
+    const std::vector<T> &row_major, int64_t rows, int64_t cols)
 {
-  std::vector<float> column_major(static_cast<size_t>(rows * cols), 0.0f);
+  std::vector<T> column_major(static_cast<size_t>(rows * cols), T{0});
   for (int64_t row = 0; row < rows; ++row)
   {
     for (int64_t col = 0; col < cols; ++col)
@@ -250,25 +276,26 @@ std::vector<float> RowMajorToColumnMajor(
   return column_major;
 }
 
-std::vector<float> BuildSyntheticDenseSpdRowMajor(int64_t n)
+template <typename T>
+std::vector<T> BuildSyntheticDenseSpdRowMajor(int64_t n)
 {
-  std::vector<float> lower(static_cast<size_t>(n * n), 0.0f);
+  std::vector<T> lower(static_cast<size_t>(n * n), T{0});
   for (int64_t i = 0; i < n; ++i)
   {
-    lower[static_cast<size_t>(i * n + i)] = 2.0f + static_cast<float>(i);
+    lower[static_cast<size_t>(i * n + i)] = static_cast<T>(2.0 + i);
     for (int64_t j = 0; j < i; ++j)
     {
       lower[static_cast<size_t>(i * n + j)] =
-          0.05f * static_cast<float>((i + 1) + (j + 1));
+          static_cast<T>(0.05 * static_cast<double>((i + 1) + (j + 1)));
     }
   }
 
-  std::vector<float> a(static_cast<size_t>(n * n), 0.0f);
+  std::vector<T> a(static_cast<size_t>(n * n), T{0});
   for (int64_t i = 0; i < n; ++i)
   {
     for (int64_t j = 0; j < n; ++j)
     {
-      float sum = 0.0f;
+      T sum = T{0};
       int64_t kmax = std::min(i, j);
       for (int64_t k = 0; k <= kmax; ++k)
       {
@@ -392,7 +419,8 @@ std::vector<std::string> CuSolverMpPotrsStubContractIssues(
   return issues;
 }
 
-std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
+template <typename T>
+std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntimeTyped(
     const CuSolverMpContextSpec &spec, const CuSolverMpPotrsProblemSpec &problem,
     const void *input_a, size_t input_a_elements, const void *input_b,
     size_t input_b_elements, std::string *error_message)
@@ -405,6 +433,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   }
   return std::nullopt;
 #else
+  using Traits = CuSolverMpTypeTraits<T>;
   auto fail = [error_message](const std::string &message)
       -> std::optional<CuSolverMpRuntimeProbeResult> {
     if (error_message != nullptr)
@@ -538,7 +567,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
       spec.process_grid.npcol);
 
   cusolver_status = cusolverMpCreateMatrixDesc(
-      &desc_a, grid, CUDA_R_32F, problem.matrix_rows, problem.matrix_cols,
+      &desc_a, grid, Traits::kCudaType, problem.matrix_rows, problem.matrix_cols,
       problem.matrix_block_rows, problem.matrix_block_cols, 0, 0,
       std::max<int64_t>(1, local_matrix_rows));
   if (cusolver_status != CUSOLVER_STATUS_SUCCESS)
@@ -552,7 +581,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   }
 
   cusolver_status = cusolverMpCreateMatrixDesc(
-      &desc_b, grid, CUDA_R_32F, problem.rhs_rows, problem.rhs_cols,
+      &desc_b, grid, Traits::kCudaType, problem.rhs_rows, problem.rhs_cols,
       problem.rhs_block_rows, problem.rhs_block_cols, 0, 0,
       std::max<int64_t>(1, local_rhs_rows));
   if (cusolver_status != CUSOLVER_STATUS_SUCCESS)
@@ -568,7 +597,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
 
   size_t matrix_bytes = static_cast<size_t>(
       std::max<int64_t>(1, local_matrix_rows) *
-      std::max<int64_t>(1, local_matrix_cols) * sizeof(float));
+      std::max<int64_t>(1, local_matrix_cols) * sizeof(T));
   cuda_status = cudaMalloc(&d_a, matrix_bytes);
   if (cuda_status != cudaSuccess)
   {
@@ -583,7 +612,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
 
   size_t rhs_bytes = static_cast<size_t>(
       std::max<int64_t>(1, local_rhs_rows) *
-      std::max<int64_t>(1, local_rhs_cols) * sizeof(float));
+      std::max<int64_t>(1, local_rhs_cols) * sizeof(T));
   cuda_status = cudaMalloc(&d_b, rhs_bytes);
   if (cuda_status != cudaSuccess)
   {
@@ -603,7 +632,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   size_t potrf_workspace_host_bytes = 0;
   cusolver_status = cusolverMpPotrf_bufferSize(
       handle, CUBLAS_FILL_MODE_LOWER, problem.matrix_rows, d_a, kSubmatrixStart,
-      kSubmatrixStart, desc_a, CUDA_R_32F, &potrf_workspace_device_bytes,
+      kSubmatrixStart, desc_a, Traits::kCudaType, &potrf_workspace_device_bytes,
       &potrf_workspace_host_bytes);
   if (cusolver_status != CUSOLVER_STATUS_SUCCESS)
   {
@@ -626,7 +655,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     cusolver_status = cusolverMpPotrs_bufferSize(
         handle, CUBLAS_FILL_MODE_LOWER, problem.matrix_rows, problem.rhs_cols,
         d_a, kSubmatrixStart, kSubmatrixStart, desc_a, d_b, kSubmatrixStart,
-        kSubmatrixStart, desc_b, CUDA_R_32F, &potrs_workspace_device_bytes,
+        kSubmatrixStart, desc_b, Traits::kCudaType, &potrs_workspace_device_bytes,
         &potrs_workspace_host_bytes);
     if (cusolver_status != CUSOLVER_STATUS_SUCCESS)
     {
@@ -660,17 +689,17 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   }
 
   debug_log("before_host_vector_alloc");
-  std::vector<float> host_a(
+  std::vector<T> host_a(
       static_cast<size_t>(std::max<int64_t>(1, local_matrix_rows) *
                           std::max<int64_t>(1, local_matrix_cols)),
-      0.0f);
-  std::vector<float> host_b(
+      T{0});
+  std::vector<T> host_b(
       static_cast<size_t>(std::max<int64_t>(1, local_rhs_rows) *
                           std::max<int64_t>(1, local_rhs_cols)),
-      1.0f);
+      T{1});
   debug_log("after_host_vector_alloc");
-  std::vector<float> host_input_a_rowmajor;
-  std::vector<float> host_input_b;
+  std::vector<T> host_input_a_rowmajor;
+  std::vector<T> host_input_b;
   bool use_input_buffers = input_a != nullptr && input_b != nullptr &&
                            !EnvFlagEnabled("JAXMG_CUSOLVERMP_USE_SYNTHETIC_LOCAL");
   auto debug_prefix = [&]() {
@@ -691,7 +720,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     {
       host_input_a_rowmajor.resize(full_a_elements);
       cuda_status = cudaMemcpy(host_input_a_rowmajor.data(), input_a,
-                               sizeof(float) * host_input_a_rowmajor.size(),
+                               sizeof(T) * host_input_a_rowmajor.size(),
                                cudaMemcpyDeviceToHost);
       if (cuda_status != cudaSuccess)
       {
@@ -723,9 +752,9 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
                     debug_prefix() + "]");
       }
 
-      std::vector<float> local_input_a_rowmajor(input_a_elements, 0.0f);
+      std::vector<T> local_input_a_rowmajor(input_a_elements, T{0});
       cuda_status = cudaMemcpy(local_input_a_rowmajor.data(), input_a,
-                               sizeof(float) * local_input_a_rowmajor.size(),
+                               sizeof(T) * local_input_a_rowmajor.size(),
                                cudaMemcpyDeviceToHost);
       if (cuda_status != cudaSuccess)
       {
@@ -745,7 +774,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
           static_cast<int64_t>(input_a_elements / static_cast<size_t>(problem.matrix_cols));
       const std::string a_chunk_path =
           bootstrap_path + ".input_a.rank" + std::to_string(spec.process_rank) + ".bin";
-      if (!WriteFloatMatrixChunk(
+      if (!WriteTypedMatrixChunk<T>(
               a_chunk_path, local_input_a_rows, problem.matrix_cols,
               local_input_a_rowmajor))
       {
@@ -771,10 +800,10 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
         {
           int64_t chunk_rows = 0;
           int64_t chunk_cols = 0;
-          std::vector<float> chunk_values;
+          std::vector<T> chunk_values;
           const std::string rank_chunk_path =
               bootstrap_path + ".input_a.rank" + std::to_string(rank) + ".bin";
-          if (!ReadFloatMatrixChunkWithRetry(
+          if (!ReadTypedMatrixChunkWithRetry<T>(
                   rank_chunk_path, &chunk_rows, &chunk_cols, &chunk_values, timeout_ms))
           {
             cudaFree(d_b);
@@ -809,7 +838,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
           row_offset += chunk_rows;
         }
         if (row_offset != problem.matrix_rows ||
-            !WriteFloatMatrixChunk(
+            !WriteTypedMatrixChunk<T>(
                 gathered_a_path, problem.matrix_rows, problem.matrix_cols,
                 host_input_a_rowmajor))
         {
@@ -828,7 +857,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
       {
         int64_t gathered_rows = problem.matrix_rows;
         int64_t gathered_cols = problem.matrix_cols;
-        if (!ReadFloatMatrixChunkWithRetry(
+        if (!ReadTypedMatrixChunkWithRetry<T>(
                 gathered_a_path, &gathered_rows, &gathered_cols,
                 &host_input_a_rowmajor, timeout_ms))
         {
@@ -849,7 +878,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     {
       host_input_b.resize(full_b_elements);
       cuda_status = cudaMemcpy(host_input_b.data(), input_b,
-                               sizeof(float) * host_input_b.size(),
+                               sizeof(T) * host_input_b.size(),
                                cudaMemcpyDeviceToHost);
       if (cuda_status != cudaSuccess)
       {
@@ -881,9 +910,9 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
                     debug_prefix() + "]");
       }
 
-      std::vector<float> local_input_b(input_b_elements, 0.0f);
+      std::vector<T> local_input_b(input_b_elements, T{0});
       cuda_status = cudaMemcpy(local_input_b.data(), input_b,
-                               sizeof(float) * local_input_b.size(),
+                               sizeof(T) * local_input_b.size(),
                                cudaMemcpyDeviceToHost);
       if (cuda_status != cudaSuccess)
       {
@@ -904,9 +933,8 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
 
     if (spec.process_count > 1)
     {
-      std::vector<float> host_input_a_colmajor =
-          RowMajorToColumnMajor(host_input_a_rowmajor, problem.matrix_rows,
-                                problem.matrix_cols);
+      std::vector<T> host_input_a_colmajor = RowMajorToColumnMajor(
+          host_input_a_rowmajor, problem.matrix_rows, problem.matrix_cols);
 
       cusolver_status = cusolverMpMatrixScatterH2D(
           handle, problem.matrix_rows, problem.matrix_cols, d_a, kSubmatrixStart,
@@ -1021,8 +1049,8 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     debug_log("before_synthetic_local_build");
     if (EnvFlagEnabled("JAXMG_CUSOLVERMP_USE_DENSE_SYNTHETIC"))
     {
-      std::vector<float> synthetic_a_rowmajor =
-          BuildSyntheticDenseSpdRowMajor(problem.matrix_rows);
+      std::vector<T> synthetic_a_rowmajor =
+          BuildSyntheticDenseSpdRowMajor<T>(problem.matrix_rows);
       for (int64_t col = 0; col < problem.matrix_cols; ++col)
       {
         if (OwnerCoord(col, problem.matrix_block_cols, spec.process_grid.npcol) !=
@@ -1064,7 +1092,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
         int local_col = LocalIndexFromGlobal(
             global_i, problem.matrix_block_cols, process_col, spec.process_grid.npcol);
         host_a[static_cast<size_t>(local_row + local_col * local_matrix_rows)] =
-            static_cast<float>(global_i + 1);
+            static_cast<T>(global_i + 1);
       }
     }
 
@@ -1079,7 +1107,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
         }
         int local_row = LocalIndexFromGlobal(
             global_i, problem.rhs_block_rows, process_row, spec.process_grid.nprow);
-        host_b[static_cast<size_t>(local_row)] = 1.0f;
+        host_b[static_cast<size_t>(local_row)] = T{1};
       }
     }
     debug_log("after_synthetic_local_build");
@@ -1184,7 +1212,8 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   debug_log("before_cusolverMpPotrf");
   cusolver_status = cusolverMpPotrf(
       handle, CUBLAS_FILL_MODE_LOWER, problem.matrix_rows, d_a, kSubmatrixStart,
-      kSubmatrixStart, desc_a, CUDA_R_32F, d_work, potrf_workspace_device_bytes,
+      kSubmatrixStart, desc_a, Traits::kCudaType, d_work,
+      potrf_workspace_device_bytes,
       h_work.empty() ? nullptr : h_work.data(), potrf_workspace_host_bytes, d_info);
   if (cusolver_status != CUSOLVER_STATUS_SUCCESS)
   {
@@ -1265,7 +1294,8 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   cusolver_status = cusolverMpPotrs(
       handle, CUBLAS_FILL_MODE_LOWER, problem.matrix_rows, problem.rhs_cols, d_a,
       kSubmatrixStart, kSubmatrixStart, desc_a, d_b, kSubmatrixStart,
-      kSubmatrixStart, desc_b, CUDA_R_32F, d_work, potrs_workspace_device_bytes,
+      kSubmatrixStart, desc_b, Traits::kCudaType, d_work,
+      potrs_workspace_device_bytes,
       h_work.empty() ? nullptr : h_work.data(), potrs_workspace_host_bytes, d_info);
   if (cusolver_status != CUSOLVER_STATUS_SUCCESS)
   {
@@ -1324,8 +1354,8 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
                 " [" + debug_prefix() + "]");
   }
 
-  std::vector<float> solved_rhs(
-      static_cast<size_t>(problem.rhs_rows * problem.rhs_cols), 0.0f);
+  std::vector<T> solved_rhs(
+      static_cast<size_t>(problem.rhs_rows * problem.rhs_cols), T{0});
   if (spec.process_count > 1)
   {
     cusolver_status = cusolverMpMatrixGatherD2H(
@@ -1373,7 +1403,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     }
 
     void *d_solved_rhs = nullptr;
-    const size_t solved_rhs_bytes = sizeof(float) * solved_rhs.size();
+    const size_t solved_rhs_bytes = sizeof(T) * solved_rhs.size();
     cuda_status = cudaMalloc(&d_solved_rhs, std::max<size_t>(1, solved_rhs_bytes));
     if (cuda_status != cudaSuccess)
     {
@@ -1420,7 +1450,8 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     }
 
     nccl_status = ncclBroadcast(
-        d_solved_rhs, d_solved_rhs, solved_rhs.size(), ncclFloat32, 0, comm, stream);
+        d_solved_rhs, d_solved_rhs, solved_rhs.size(), Traits::kNcclType, 0,
+        comm, stream);
     if (nccl_status != ncclSuccess)
     {
       cudaFree(d_solved_rhs);
@@ -1491,7 +1522,7 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
   else
   {
     cuda_status = cudaMemcpy(
-        solved_rhs.data(), d_b, sizeof(float) * solved_rhs.size(),
+        solved_rhs.data(), d_b, sizeof(T) * solved_rhs.size(),
         cudaMemcpyDeviceToHost);
     if (cuda_status != cudaSuccess)
     {
@@ -1512,32 +1543,40 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
     }
   }
 
-  float max_abs_error = 0.0f;
-  float residual_max_abs_error = 0.0f;
+  double max_abs_error = 0.0;
+  double residual_max_abs_error = 0.0;
   if (!host_input_a_rowmajor.empty())
   {
     for (int64_t row = 0; row < problem.matrix_rows; ++row)
     {
-      float accum = 0.0f;
+      double accum = 0.0;
       for (int64_t col = 0; col < problem.matrix_cols; ++col)
       {
-        accum += host_input_a_rowmajor[static_cast<size_t>(row * problem.matrix_cols + col)] *
-                 solved_rhs[static_cast<size_t>(col)];
+        accum += static_cast<double>(
+            host_input_a_rowmajor[static_cast<size_t>(row * problem.matrix_cols + col)]) *
+                 static_cast<double>(solved_rhs[static_cast<size_t>(col)]);
       }
       residual_max_abs_error = std::max(
           residual_max_abs_error,
-          std::fabs(accum - host_input_b[static_cast<size_t>(row)]));
+          std::fabs(accum - static_cast<double>(host_input_b[static_cast<size_t>(row)])));
     }
   }
   else
   {
     for (int64_t global_i = 0; global_i < problem.rhs_rows; ++global_i)
     {
-      float expected = 1.0f / static_cast<float>(global_i + 1);
+      double expected = 1.0 / static_cast<double>(global_i + 1);
       max_abs_error = std::max(
           max_abs_error,
-          std::fabs(solved_rhs[static_cast<size_t>(global_i)] - expected));
+          std::fabs(static_cast<double>(solved_rhs[static_cast<size_t>(global_i)]) -
+                    expected));
     }
+  }
+
+  std::vector<std::byte> solved_rhs_bytes(sizeof(T) * solved_rhs.size());
+  if (!solved_rhs.empty())
+  {
+    std::memcpy(solved_rhs_bytes.data(), solved_rhs.data(), solved_rhs_bytes.size());
   }
 
   int nccl_version = 0;
@@ -1588,11 +1627,37 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
       .potrs_workspace_host_bytes = potrs_workspace_host_bytes,
       .potrf_info = potrf_info,
       .potrs_info = potrs_info,
+      .scalar_type = std::is_same_v<T, float> ? CuSolverMpScalarType::kF32
+                                              : CuSolverMpScalarType::kF64,
       .solution_max_abs_error = max_abs_error,
       .residual_max_abs_error = residual_max_abs_error,
-      .solved_rhs = std::move(solved_rhs),
+      .solved_rhs_bytes = std::move(solved_rhs_bytes),
   };
 #endif
+}
+
+std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntime(
+    CuSolverMpScalarType scalar_type, const CuSolverMpContextSpec &spec,
+    const CuSolverMpPotrsProblemSpec &problem, const void *input_a,
+    size_t input_a_elements, const void *input_b, size_t input_b_elements,
+    std::string *error_message)
+{
+  switch (scalar_type)
+  {
+  case CuSolverMpScalarType::kF32:
+    return ProbeCuSolverMpRuntimeTyped<float>(
+        spec, problem, input_a, input_a_elements, input_b, input_b_elements,
+        error_message);
+  case CuSolverMpScalarType::kF64:
+    return ProbeCuSolverMpRuntimeTyped<double>(
+        spec, problem, input_a, input_a_elements, input_b, input_b_elements,
+        error_message);
+  }
+  if (error_message != nullptr)
+  {
+    *error_message = "unsupported cuSOLVERMp scalar type";
+  }
+  return std::nullopt;
 }
 
 } // namespace jaxmg

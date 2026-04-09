@@ -76,11 +76,24 @@ ffi::Error PotrsCuSolverMpDispatch(
   (void)stream;
   (void)scratch;
 
-  if (a.element_type() != ffi::F32 || b.element_type() != ffi::F32 ||
-      out_a->element_type() != ffi::F32 || out_b->element_type() != ffi::F32)
+  CuSolverMpScalarType scalar_type;
+  size_t scalar_size = 0;
+  if (a.element_type() == ffi::F32 && b.element_type() == ffi::F32 &&
+      out_a->element_type() == ffi::F32 && out_b->element_type() == ffi::F32)
+  {
+    scalar_type = CuSolverMpScalarType::kF32;
+    scalar_size = sizeof(float);
+  }
+  else if (a.element_type() == ffi::F64 && b.element_type() == ffi::F64 &&
+           out_a->element_type() == ffi::F64 && out_b->element_type() == ffi::F64)
+  {
+    scalar_type = CuSolverMpScalarType::kF64;
+    scalar_size = sizeof(double);
+  }
+  else
   {
     return ffi::Error::InvalidArgument(
-        "potrs_cusolvermp currently supports only float32 in the initial real execution path.");
+        "potrs_cusolvermp currently supports only homogeneous float32 or float64 inputs.");
   }
 
   jaxmg::CuSolverMpContextSpec spec{
@@ -133,8 +146,8 @@ ffi::Error PotrsCuSolverMpDispatch(
 #if defined(JAXMG_HAVE_CUSOLVERMP) && defined(JAXMG_HAVE_NCCL)
   std::string probe_error;
   auto probe = jaxmg::ProbeCuSolverMpRuntime(
-      spec, problem, a.untyped_data(), a.size_bytes() / sizeof(float),
-      b.untyped_data(), b.size_bytes() / sizeof(float), &probe_error);
+      scalar_type, spec, problem, a.untyped_data(), a.size_bytes() / scalar_size,
+      b.untyped_data(), b.size_bytes() / scalar_size, &probe_error);
   if (!probe.has_value())
   {
     return ffi::Error::InvalidArgument(
@@ -144,10 +157,10 @@ ffi::Error PotrsCuSolverMpDispatch(
             probe_error));
   }
 
-  auto input_a_data = static_cast<float *>(a.untyped_data());
-  auto input_b_data = static_cast<float *>(b.untyped_data());
-  auto out_a_data = static_cast<float *>(out_a->untyped_data());
-  auto out_b_data = static_cast<float *>(out_b->untyped_data());
+  auto input_a_data = a.untyped_data();
+  auto input_b_data = b.untyped_data();
+  auto out_a_data = out_a->untyped_data();
+  auto out_b_data = out_b->untyped_data();
   auto status_data = status->typed_data();
 
   auto copy_status =
@@ -158,11 +171,10 @@ ffi::Error PotrsCuSolverMpDispatch(
         absl::StrFormat("potrs_cusolvermp failed to copy A to output: gpuMemcpy returned %d",
                         static_cast<int>(copy_status)));
   }
-  size_t output_b_elements = out_b->size_bytes() / sizeof(float);
-  if (probe->solved_rhs.size() == output_b_elements)
+  if (probe->solved_rhs_bytes.size() == out_b->size_bytes())
   {
-    copy_status = gpuMemcpy(out_b_data, probe->solved_rhs.data(),
-                            sizeof(float) * probe->solved_rhs.size(),
+    copy_status = gpuMemcpy(out_b_data, probe->solved_rhs_bytes.data(),
+                            probe->solved_rhs_bytes.size(),
                             gpuMemcpyHostToDevice);
   }
   else
