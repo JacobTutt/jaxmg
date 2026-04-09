@@ -134,6 +134,12 @@ def _run_single_device_reference(host_a, host_b):
         return np.asarray(_solve(ref_a, ref_b))
 
 
+def _serialize_value(x):
+    if np.iscomplexobj(x):
+        return {"real": float(np.real(x)), "imag": float(np.imag(x))}
+    return float(np.real(x))
+
+
 def _run_diag_solve(a, b, dtype, mesh, host_a=None, host_b=None):
     from jaxmg import potrs
 
@@ -164,7 +170,7 @@ def _run_diag_solve(a, b, dtype, mesh, host_a=None, host_b=None):
         "local_device_ids": [d.id for d in jax.local_devices()],
         "status": int(status),
         "out_shape": tuple(out.shape),
-        "out": [float(x) for x in jnp.asarray(out)],
+        "out": [_serialize_value(x) for x in np.asarray(out)],
         "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
         "slurm_localid": os.environ.get("SLURM_LOCALID"),
     }
