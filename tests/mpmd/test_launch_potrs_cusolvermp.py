@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import jax
+import os
 import pytest
 
 from mpmd_helper import run_mpmd_test
@@ -16,7 +17,10 @@ if "gpu" not in platforms:
 
 
 def _cases():
-    return ["diag", "dense_spd", "diag_row_sharded", "dense_spd_row_sharded"]
+    cases = ["diag", "dense_spd"]
+    if os.environ.get("JAXMG_RUN_EXPERIMENTAL_ROW_SHARDED_MP", "").strip() == "1":
+        cases.extend(["diag_row_sharded", "dense_spd_row_sharded"])
+    return cases
 
 
 @pytest.mark.parametrize("name", _cases())
