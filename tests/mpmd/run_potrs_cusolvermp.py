@@ -69,9 +69,36 @@ def _solve_diag(dtype, mesh):
     return _run_diag_solve(a, b, dtype, mesh)
 
 
+def _make_dense_spd(dtype):
+    lower = jnp.asarray(
+        [
+            [2.0, 0.0, 0.0, 0.0],
+            [0.1, 2.5, 0.0, 0.0],
+            [0.2, 0.3, 3.0, 0.0],
+            [0.05, 0.15, 0.25, 3.5],
+        ],
+        dtype=dtype,
+    )
+    return lower @ lower.T
+
+
+def _solve_dense_spd(dtype, mesh):
+    a = _make_dense_spd(dtype)
+    b = jnp.asarray([1.0, 0.5, -0.25, 0.75], dtype=dtype)
+    return _run_diag_solve(a, b, dtype, mesh)
+
+
 def _solve_diag_row_sharded(dtype, mesh):
     a = jnp.diag(jnp.arange(1, 5, dtype=dtype))
     b = jnp.ones((4,), dtype=dtype)
+    a = jax.device_put(a, NamedSharding(mesh, P("x", None)))
+    b = jax.device_put(b, NamedSharding(mesh, P(None)))
+    return _run_diag_solve(a, b, dtype, mesh)
+
+
+def _solve_dense_spd_row_sharded(dtype, mesh):
+    a = _make_dense_spd(dtype)
+    b = jnp.asarray([1.0, 0.5, -0.25, 0.75], dtype=dtype)
     a = jax.device_put(a, NamedSharding(mesh, P("x", None)))
     b = jax.device_put(b, NamedSharding(mesh, P(None)))
     return _run_diag_solve(a, b, dtype, mesh)
@@ -90,7 +117,7 @@ def _run_diag_solve(a, b, dtype, mesh):
         return_status=True,
     )
     out.block_until_ready()
-    expected = jnp.asarray([1.0, 0.5, 1.0 / 3.0, 0.25], dtype=dtype)
+    expected = jnp.linalg.solve(a, b)
     assert int(status) == 0
     assert jnp.allclose(jnp.asarray(out), expected, atol=1e-6)
 
@@ -112,7 +139,9 @@ def _run_diag_solve(a, b, dtype, mesh):
 def _build_registry(mesh) -> Dict[str, Callable]:
     return {
         "diag": lambda dtype: _solve_diag(dtype, mesh),
+        "dense_spd": lambda dtype: _solve_dense_spd(dtype, mesh),
         "diag_row_sharded": lambda dtype: _solve_diag_row_sharded(dtype, mesh),
+        "dense_spd_row_sharded": lambda dtype: _solve_dense_spd_row_sharded(dtype, mesh),
     }
 
 

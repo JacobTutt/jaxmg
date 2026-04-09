@@ -17,9 +17,9 @@ if "gpu" not in platforms:
 
 
 def _cases():
-    cases = ["diag"]
+    cases = ["diag", "dense_spd"]
     if os.environ.get("JAXMG_RUN_EXPERIMENTAL_ROW_SHARDED_MP", "").strip() == "1":
-        cases.append("diag_row_sharded")
+        cases.extend(["diag_row_sharded", "dense_spd_row_sharded"])
     return cases
 
 
