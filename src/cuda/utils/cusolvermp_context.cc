@@ -797,6 +797,8 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntimeTyped(
   bool use_input_buffers = input_a != nullptr && input_b != nullptr &&
                            !EnvFlagEnabled("JAXMG_CUSOLVERMP_USE_SYNTHETIC_LOCAL");
   bool used_gpu_input_pack = false;
+  const bool require_gpu_input_pack =
+      EnvFlagEnabled("JAXMG_CUSOLVERMP_REQUIRE_GPU_PACK");
   auto debug_prefix = [&]() {
     return MultiRankDebugPrefix(spec, problem, local_matrix_rows,
                                 local_matrix_cols, local_rhs_rows,
@@ -837,6 +839,18 @@ std::optional<CuSolverMpRuntimeProbeResult> ProbeCuSolverMpRuntimeTyped(
 
   if (use_input_buffers && !used_gpu_input_pack)
   {
+    if (require_gpu_input_pack && spec.process_count > 1)
+    {
+      cudaFree(d_b);
+      cudaFree(d_a);
+      cusolverMpDestroyMatrixDesc(desc_b);
+      cusolverMpDestroyMatrixDesc(desc_a);
+      cusolverMpDestroyGrid(grid);
+      cusolverMpDestroy(handle);
+      cudaStreamDestroy(stream);
+      ncclCommDestroy(comm);
+      return fail("gpu input pack was required but not used [" + debug_prefix() + "]");
+    }
     const size_t full_a_elements =
         static_cast<size_t>(problem.matrix_rows * problem.matrix_cols);
     const size_t full_b_elements =
