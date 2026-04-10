@@ -46,6 +46,19 @@ def test_resolve_launch_config_from_env(monkeypatch):
     )
 
 
+def test_resolve_launch_config_process_grid_from_env(monkeypatch):
+    monkeypatch.setenv("JAX_COORDINATOR_ADDRESS", "nid0:12395")
+    monkeypatch.setenv("SLURM_PROCID", "0")
+    monkeypatch.setenv("SLURM_NTASKS", "2")
+    monkeypatch.setenv("SLURM_LOCALID", "0")
+    monkeypatch.setenv("JAXMG_MPTEST_NAME", "dense_spd_row_sharded")
+    monkeypatch.setenv("JAXMG_MPTEST_DTYPE", "float32")
+    monkeypatch.setenv("JAXMG_MPTEST_PROCESS_GRID_NPROW", "1")
+    monkeypatch.setenv("JAXMG_MPTEST_PROCESS_GRID_NPCOL", "2")
+    cfg = _resolve_launch_config(["run_potrs_cusolvermp.py"])
+    assert cfg.process_grid == (1, 2)
+
+
 def test_masked_visible_device_normalizes_to_local_zero(monkeypatch):
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "7")
     assert _resolve_task_local_device_id(1) == 0

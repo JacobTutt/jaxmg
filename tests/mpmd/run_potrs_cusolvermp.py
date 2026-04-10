@@ -21,6 +21,7 @@ class LaunchConfig:
     local_device_id: int
     task_name: str
     task_dtype_name: str
+    process_grid: tuple[int, int] | None = None
 
 
 def _resolve_task_local_device_id(default_id: int) -> int:
@@ -46,6 +47,7 @@ def _resolve_launch_config(argv: List[str]) -> LaunchConfig:
             ),
             task_name=argv[4],
             task_dtype_name=argv[5],
+            process_grid=_resolve_process_grid(),
         )
 
     return LaunchConfig(
@@ -57,7 +59,21 @@ def _resolve_launch_config(argv: List[str]) -> LaunchConfig:
         ),
         task_name=os.environ["JAXMG_MPTEST_NAME"],
         task_dtype_name=os.environ["JAXMG_MPTEST_DTYPE"],
+        process_grid=_resolve_process_grid(),
     )
+
+
+def _resolve_process_grid() -> tuple[int, int] | None:
+    nprow = os.environ.get("JAXMG_MPTEST_PROCESS_GRID_NPROW")
+    npcol = os.environ.get("JAXMG_MPTEST_PROCESS_GRID_NPCOL")
+    if nprow is None and npcol is None:
+        return None
+    if nprow is None or npcol is None:
+        raise ValueError(
+            "JAXMG_MPTEST_PROCESS_GRID_NPROW and "
+            "JAXMG_MPTEST_PROCESS_GRID_NPCOL must both be set."
+        )
+    return (int(nprow), int(npcol))
 
 
 def _println(prefix: str, payload: dict):
@@ -80,10 +96,10 @@ def _initialize_distributed(config: LaunchConfig):
     os.environ.pop("JAXMG_ENABLE_MP_STUB", None)
 
 
-def _solve_diag(dtype, mesh):
+def _solve_diag(dtype, mesh, process_grid):
     host_a = jnp.diag(jnp.arange(1, 5, dtype=dtype))
     host_b = jnp.ones((4,), dtype=dtype)
-    return _run_diag_solve(host_a, host_b, dtype, mesh)
+    return _run_diag_solve(host_a, host_b, dtype, mesh, process_grid)
 
 
 def _make_dense_spd(dtype):
@@ -99,26 +115,30 @@ def _make_dense_spd(dtype):
     return lower @ lower.T.conj()
 
 
-def _solve_dense_spd(dtype, mesh):
+def _solve_dense_spd(dtype, mesh, process_grid):
     host_a = _make_dense_spd(dtype)
     host_b = jnp.asarray([1.0, 0.5, -0.25, 0.75], dtype=dtype)
-    return _run_diag_solve(host_a, host_b, dtype, mesh)
+    return _run_diag_solve(host_a, host_b, dtype, mesh, process_grid)
 
 
-def _solve_diag_row_sharded(dtype, mesh):
+def _solve_diag_row_sharded(dtype, mesh, process_grid):
     host_a = jnp.diag(jnp.arange(1, 5, dtype=dtype))
     host_b = jnp.ones((4,), dtype=dtype)
     a = jax.device_put(host_a, NamedSharding(mesh, P("x", None)))
     b = jax.device_put(host_b, NamedSharding(mesh, P(None)))
-    return _run_diag_solve(a, b, dtype, mesh, host_a=host_a, host_b=host_b)
+    return _run_diag_solve(
+        a, b, dtype, mesh, process_grid, host_a=host_a, host_b=host_b
+    )
 
 
-def _solve_dense_spd_row_sharded(dtype, mesh):
+def _solve_dense_spd_row_sharded(dtype, mesh, process_grid):
     host_a = _make_dense_spd(dtype)
     host_b = jnp.asarray([1.0, 0.5, -0.25, 0.75], dtype=dtype)
     a = jax.device_put(host_a, NamedSharding(mesh, P("x", None)))
     b = jax.device_put(host_b, NamedSharding(mesh, P(None)))
-    return _run_diag_solve(a, b, dtype, mesh, host_a=host_a, host_b=host_b)
+    return _run_diag_solve(
+        a, b, dtype, mesh, process_grid, host_a=host_a, host_b=host_b
+    )
 
 
 def _run_single_device_reference(host_a, host_b):
@@ -140,7 +160,7 @@ def _serialize_value(x):
     return float(np.real(x))
 
 
-def _run_diag_solve(a, b, dtype, mesh, host_a=None, host_b=None):
+def _run_diag_solve(a, b, dtype, mesh, process_grid, host_a=None, host_b=None):
     from jaxmg import potrs
 
     if host_a is None:
@@ -153,7 +173,7 @@ def _run_diag_solve(a, b, dtype, mesh, host_a=None, host_b=None):
         2,
         mesh=mesh,
         in_specs=(P("x", None),),
-        process_grid=(jax.device_count(), 1),
+        process_grid=process_grid,
         return_status=True,
     )
     out.block_until_ready()
@@ -176,12 +196,16 @@ def _run_diag_solve(a, b, dtype, mesh, host_a=None, host_b=None):
     }
 
 
-def _build_registry(mesh) -> Dict[str, Callable]:
+def _build_registry(mesh, process_grid) -> Dict[str, Callable]:
     return {
-        "diag": lambda dtype: _solve_diag(dtype, mesh),
-        "dense_spd": lambda dtype: _solve_dense_spd(dtype, mesh),
-        "diag_row_sharded": lambda dtype: _solve_diag_row_sharded(dtype, mesh),
-        "dense_spd_row_sharded": lambda dtype: _solve_dense_spd_row_sharded(dtype, mesh),
+        "diag": lambda dtype: _solve_diag(dtype, mesh, process_grid),
+        "dense_spd": lambda dtype: _solve_dense_spd(dtype, mesh, process_grid),
+        "diag_row_sharded": lambda dtype: _solve_diag_row_sharded(
+            dtype, mesh, process_grid
+        ),
+        "dense_spd_row_sharded": lambda dtype: _solve_dense_spd_row_sharded(
+            dtype, mesh, process_grid
+        ),
     }
 
 
@@ -189,7 +213,8 @@ def main(argv: List[str]):
     config = _resolve_launch_config(argv)
     _initialize_distributed(config)
     mesh = jax.make_mesh((jax.device_count(),), ("x",))
-    registry = _build_registry(mesh)
+    process_grid = config.process_grid or (jax.device_count(), 1)
+    registry = _build_registry(mesh, process_grid)
 
     dtypes = {
         "float32": jnp.float32,
@@ -205,7 +230,10 @@ def main(argv: List[str]):
             "proc": config.process_id,
             "available": sorted(registry.keys()),
             "selected": [config.task_name],
-            "params": {"dtype": [config.task_dtype_name]},
+            "params": {
+                "dtype": [config.task_dtype_name],
+                "process_grid": [list(process_grid)],
+            },
         },
     )
 
@@ -217,7 +245,10 @@ def main(argv: List[str]):
                 "proc": config.process_id,
                 "name": config.task_name,
                 "status": "ok",
-                "params": {"dtype": config.task_dtype_name},
+                "params": {
+                    "dtype": config.task_dtype_name,
+                    "process_grid": list(process_grid),
+                },
                 "payload": payload,
             },
         )
@@ -233,7 +264,10 @@ def main(argv: List[str]):
                 "proc": config.process_id,
                 "name": config.task_name,
                 "status": "fail",
-                "params": {"dtype": config.task_dtype_name},
+                "params": {
+                    "dtype": config.task_dtype_name,
+                    "process_grid": list(process_grid),
+                },
                 "traceback": traceback.format_exc(limit=40),
             },
         )
