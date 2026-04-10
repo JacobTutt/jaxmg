@@ -181,11 +181,15 @@ CuSolverMpGpuPackResult TryPackCuSolverMpInputsGpuImpl(
     }
   }
 
+  // cuSOLVERMp device grids use column-major rank ordering.
+  const int process_row = process_rank % nprow;
+  const int process_col = process_rank / nprow;
+
   cudaError_t cuda_status = LaunchPackGlobalRowMajorToLocalBlockCyclic(
       static_cast<const T *>(d_global_a), static_cast<T *>(d_a), matrix_rows,
       matrix_cols, local_matrix_rows, local_matrix_cols,
-      matrix_block_rows, matrix_block_cols, process_rank / npcol,
-      process_rank % npcol, nprow, npcol, stream);
+      matrix_block_rows, matrix_block_cols, process_row,
+      process_col, nprow, npcol, stream);
   if (cuda_status != cudaSuccess)
   {
     return fail("pack kernel(A) launch failed: " + CudaErrorString(cuda_status));
@@ -194,7 +198,7 @@ CuSolverMpGpuPackResult TryPackCuSolverMpInputsGpuImpl(
   cuda_status = LaunchPackGlobalRowMajorToLocalBlockCyclic(
       static_cast<const T *>(d_global_b), static_cast<T *>(d_b), rhs_rows,
       rhs_cols, local_rhs_rows, local_rhs_cols, rhs_block_rows,
-      rhs_block_cols, process_rank / npcol, process_rank % npcol, nprow, npcol,
+      rhs_block_cols, process_row, process_col, nprow, npcol,
       stream);
   if (cuda_status != cudaSuccess)
   {
