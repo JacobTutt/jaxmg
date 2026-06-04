@@ -12,3 +12,22 @@ JAXMg provides a C++ interface between [JAX](https://github.com/google/jax) and 
 - [cusolverMgPotrs](https://docs.nvidia.com/cuda/cusolver/index.html#cusolvermgsyevd-deprecated): Computes eigenvalues and eigenvectors of an $N\times N$ symmetric (Hermitian) matrix.
 
 For more details, see the [API](api/potrs.md) and the accompanying [paper](https://arxiv.org/abs/2601.14466).
+
+## Downstream logdet branch
+
+This downstream branch adds native log determinant support to the multi-GPU
+`potrs` workflow. In addition to solving `A x = b`, `potrs` can return
+`log|A|` from the Cholesky factor already computed by the native solver:
+
+```python
+x, logdet = potrs(
+    A,
+    b,
+    T_A=T_A,
+    mesh=mesh,
+    in_specs=P("x", None),
+    return_logdet=True,
+)
+```
+
+Set `return_status=True` as well to return `(x, logdet, status)`.

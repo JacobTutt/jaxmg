@@ -18,34 +18,82 @@ JAXMg provides a C++ interface between [JAX](https://github.com/google/jax) and 
 
 For more details, see the [API](api/potrs.md).
 
-## Installation
+## Downstream logdet branch
 
-The package is available on PyPi and can be installed with
+This downstream branch adds native log determinant support to the multi-GPU
+`potrs` workflow. In addition to solving `A x = b`, `potrs` can return
+`log|A|` from the Cholesky factor already computed by the native solver:
 
-```bash
-pip install jaxmg[cuda12]
+```python
+x, logdet = potrs(
+    A,
+    b,
+    T_A=T_A,
+    mesh=mesh,
+    in_specs=P("x", None),
+    return_logdet=True,
+)
 ```
 
-This will install a GPU compatible version of JAX. 
+Set `return_status=True` as well to return `(x, logdet, status)`.
 
-1. `pip install "jaxmg[cuda12]"`: Use CUDA 12 (only works for `jax>=0.6.2`).
+## Installation
 
-2. `pip install "jaxmg[cuda12-local]"`: Use locally available CUDA 12 installation.
+This repository is a downstream development branch of JAXMg. It is not the
+released PyPI package. Installing the package name `jaxmg` from PyPI will install
+the upstream release, not the branch-specific log determinant support in this
+repository.
 
-3. `pip install "jaxmg[cuda13]"`: Use CUDA 13 (only works for `jax>=0.7.2`).
+There are two supported installation paths for this downstream branch.
 
-4. `pip install "jaxmg[cuda13-local]"`: Use locally available CUDA 13 installation.
+### 1. Build from source
 
-The provided binaries are compiled with
+Use this path when no prebuilt wheel matches your system, or when you are
+developing the native C++/CUDA code. Registering the checkout in the active
+Python environment and building the native CUDA libraries are separate steps.
+Build the native libraries first, then install the Python package:
 
-|**JAXMg** | **CUDA** | **cuDNN** |
-|---|---|---| 
-| `cuda12`,`cuda12-local` | 12.8.0 | 9.17.1.4|
-| `cuda13`,`cuda13-local` | 13.0.0 | 9.17.1.4|
+```bash
+git clone https://github.com/JacobTutt/jaxmg.git
+cd jaxmg
 
-Details for compiling the from source code can be found in `CONTRIBUTING.md`.
+mkdir build
+cd build
+cmake ..
+cmake --build . --target install
+cd ..
 
-> **_Note:_** `pip install jaxmg` will install a CPU-only version of JAX. Since `jaxmg` is a GPU-only package you will receive a warning to install a GPU-compatible version of jax. 
+pip install ".[cuda12-local]"
+```
+
+The CMake install step builds the native shared libraries into `src/jaxmg/cu12`
+or `src/jaxmg/cu13`, depending on the CUDA toolkit used for the build. Any
+branch that changes C++ or CUDA sources must rebuild these libraries.
+
+### 2. Prebuilt wheels
+
+Use this path when a wheel is provided for an environment matching your Python,
+CUDA, and system architecture. The wheel already contains the native shared
+libraries, so users do not need to run CMake locally. If you need to run CMake,
+use the source build path above instead.
+
+The included wheel was built on CSD3 for Linux x86_64, CPython 3.11, CUDA 12.1,
+cuDNN 8.9, and `jax[cuda12-local]==0.10.1`. It is intended for CSD3 and systems
+with a compatible software stack.
+
+To install the included wheel, clone this repository and install from the
+relative wheel path:
+
+```bash
+git clone https://github.com/JacobTutt/jaxmg.git
+cd jaxmg
+pip install "wheels/csd3/jaxmg-0.0.7-cp311-cp311-linux_x86_64.whl[csd3]"
+```
+
+The `csd3` extra installs the JAX runtime used for this wheel:
+`jax[cuda12-local]==0.10.1`.
+
+Details for compiling the source code can be found in `CONTRIBUTING.md`.
 
 ## Example
 
@@ -72,10 +120,16 @@ mesh = jax.make_mesh((ndev,), ("x",))
 A = jax.device_put(A, NamedSharding(mesh, P("x", None)))
 b = jax.device_put(b, NamedSharding(mesh, P(None, None)))
 # Call potrs
-out = potrs(A, b, T_A=T_A, mesh=mesh, in_specs=(P("x", None), ))
+out, logdet = potrs(
+    A, b, T_A=T_A, mesh=mesh, in_specs=(P("x", None), ), return_logdet=True
+)
 print(out)
+print(logdet)
 expected_out = 1.0 / (jnp.arange(N, dtype=dtype) + 1)
+expected_logdet = jnp.sum(jnp.log(jnp.arange(N, dtype=dtype) + 1))
 print(jnp.allclose(out.flatten(), expected_out))
+print(jnp.allclose(logdet, expected_logdet))
+
 ```
 which gives
 ```bash
@@ -91,6 +145,8 @@ which gives
  [0.1       ]
  [0.09090909]
  [0.08333333]]
+19.987214495661885
+True
 True
 ```
 as expected.

@@ -85,3 +85,7 @@ cuda12-local = [
 cuda13-local = [
     "jax[cuda13-local]>=0.7.2"
 ]
+
+csd3 = [
+    "jax[cuda12-local]==0.10.1"
+]
