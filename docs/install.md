@@ -41,9 +41,9 @@ CUDA, and system architecture. The wheel already contains the native shared
 libraries, so users do not need to run CMake locally. If you need to run CMake,
 use the source build path above instead.
 
-The included wheel was built on CSD3 for Linux x86_64, CPython 3.11, CUDA 12.1,
-cuDNN 8.9, and `jax[cuda12-local]==0.10.1`. It is intended for CSD3 and systems
-with a compatible software stack.
+The included wheel was built on CSD3 for Linux x86_64 and CPython 3.11 using
+CUDA 12.1. It is intended for CSD3 and systems with a compatible NVIDIA driver
+and Linux x86_64 software stack.
 
 To install the included wheel, clone this repository and install from the
 relative wheel path:
@@ -55,6 +55,6 @@ pip install "wheels/csd3/jaxmg-0.0.7-cp311-cp311-linux_x86_64.whl[csd3]"
 ```
 
 The `csd3` extra installs the JAX runtime used for this wheel:
-`jax[cuda12-local]==0.10.1`.
+`jax[cuda12]==0.10.1`.
 
 See `CONTRIBUTING.md` for more build details.
