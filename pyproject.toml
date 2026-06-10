@@ -89,3 +89,7 @@ cuda13-local = [
 csd3 = [
     "jax[cuda12]==0.10.1"
 ]
+
+isambard = [
+    "jax[cuda12]==0.10.1"
+]

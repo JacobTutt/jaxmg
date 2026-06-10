@@ -41,9 +41,15 @@ CUDA, and system architecture. The wheel already contains the native shared
 libraries, so users do not need to run CMake locally. If you need to run CMake,
 use the source build path above instead.
 
-The included wheel was built on CSD3 for Linux x86_64 and CPython 3.11 using
-CUDA 12.1. It is intended for CSD3 and systems with a compatible NVIDIA driver
-and Linux x86_64 software stack.
+Included wheels:
+
+- `wheels/csd3/jaxmg-0.0.7-cp311-cp311-linux_x86_64.whl`: built on CSD3
+  for Linux x86_64 and CPython 3.11 using CUDA 12.1. It is intended for CSD3
+  and systems with a compatible NVIDIA driver and Linux x86_64 software stack.
+- `wheels/isambard/jaxmg-0.0.7-cp311-cp311-linux_aarch64.whl`: built on
+  Isambard-AI Phase 2 for Linux aarch64 and CPython 3.11 using CUDA 12.6. It
+  is intended for Isambard and systems with a compatible NVIDIA driver and
+  Linux aarch64 software stack.
 
 To install the included wheel, clone this repository and install from the
 relative wheel path:
@@ -55,6 +61,17 @@ pip install "wheels/csd3/jaxmg-0.0.7-cp311-cp311-linux_x86_64.whl[csd3]"
 ```
 
 The `csd3` extra installs the JAX runtime used for this wheel:
+`jax[cuda12]==0.10.1`.
+
+For Isambard-compatible ARM64 systems:
+
+```bash
+git clone https://github.com/JacobTutt/jaxmg.git
+cd jaxmg
+pip install "wheels/isambard/jaxmg-0.0.7-cp311-cp311-linux_aarch64.whl[isambard]"
+```
+
+The `isambard` extra installs the JAX runtime used for this wheel:
 `jax[cuda12]==0.10.1`.
 
 See `CONTRIBUTING.md` for more build details.
